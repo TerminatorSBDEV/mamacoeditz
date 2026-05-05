@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Build n Share | WebSim</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        :root {
+            --bg: #0d0d0d;
+            --panel: #161616;
+            --accent: #00ff88;
+            --text: #ffffff;
+            --border: #2a2a2a;
+            --error: #ff4444;
+        }
+
+        body, html {
+            margin: 0; padding: 0;
+            height: 100%;
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            overflow: hidden;
+        }
+
+        /* Layout */
+        .container {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: var(--panel);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 15px;
+        }
+
+        .logo {
+            font-size: 1.1rem;
+            font-weight: 800;
+            margin-bottom: 25px;
+            color: var(--accent);
+            letter-spacing: -0.5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+            background: #000;
+            padding: 4px;
+            border-radius: 8px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #888;
+            padding: 8px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            border-radius: 5px;
+            transition: 0.2s;
+        }
+
+        .tab-btn.active {
+            background: var(--border);
+            color: white;
+        }
+
+        .app-list {
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+
+        .app-card {
+            padding: 12px;
+            background: #1e1e1e;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: 0.2s;
+        }
+
+        .app-card:hover { border-color: var(--accent); }
+        
+        .app-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .app-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .action-btn {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: #2a2a2a;
+            color: #ccc;
+        }
+
+        .action-btn.del:hover { background: var(--error); color: white; }
+        .action-btn.edit:hover { background: var(--accent); color: black; }
+
+        /* Main Content */
+        .main {
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            background: #000;
+        }
+
+        .browser-bar {
+            background: var(--panel);
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .url-input {
+            flex-grow: 1;
+            background: #000;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 12px;
+            color: var(--accent);
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
+
+        .preview-area {
+            flex-grow: 1;
+            background: white;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        /* Prompt Bar */
+        .prompt-container {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 800px;
+            background: rgba(22, 22, 22, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+        }
+
+        .prompt-box {
+            display: flex;
+            gap: 10px;
+        }
+
+        input#prompt-input {
+            flex-grow: 1;
+            background: transparent;
+            border: none;
+            color: white;
+            outline: none;
+            font-size: 1rem;
+        }
+
+        .cooldown-timer {
+            font-size: 0.75rem;
+            color: #888;
+            margin-top: 5px;
+            text-align: center;
+            display: none;
+        }
+
+        button#gen-btn {
+            background: var(--accent);
+            color: black;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button#gen-btn:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+
+        /* Editor Modal */
+        #editor-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .editor-content {
+            background: var(--panel);
+            width: 80%;
+            height: 80%;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            border: 1px solid var(--accent);
+        }
+
+        textarea#code-editor {
+            flex-grow: 1;
+            background: #000;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            padding: 15px;
+            border: 1px solid var(--border);
+            margin: 15px 0;
+            resize: none;
+        }
+
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #444;
+        }
+        .status-dot.online { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="sidebar">
+        <div class="logo">
+            <div id="status-dot" class="status-dot"></div>
+            BUILD N SHARE
+        </div>
+
+        <div class="nav-tabs">
+            <button class="tab-btn active" onclick="switchTab('explore')">Explore</button>
+            <button class="tab-btn" onclick="switchTab('mine')">My Apps</button>
+        </div>
+
+        <div class="app-list" id="app-list">
+            <!-- Apps load here -->
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="browser-bar">
+            <button class="action-btn" onclick="location.reload()">Home</button>
+            <input type="text" class="url-input" id="url-display" value="https://websim.ai/welcome" readonly>
+        </div>
+
+        <div class="preview-area">
+            <iframe id="preview-frame" sandbox="allow-scripts allow-modals allow-forms allow-popups allow-same-origin"></iframe>
+        </div>
+
+        <div class="prompt-container">
+            <div class="prompt-box">
+                <input type="text" id="prompt-input" placeholder="Describe the app you want to build...">
+                <button id="gen-btn" onclick="handleGenerate()">Generate</button>
+            </div>
+            <div id="cooldown-msg" class="cooldown-timer">Rate limit: Please wait <span id="timer-secs">10</span>s</div>
+        </div>
+    </div>
+</div>
+
+<!-- Editor Modal -->
+<div id="editor-modal">
+    <div class="editor-content">
+        <h2 style="margin:0">Edit Source Code</h2>
+        <textarea id="code-editor"></textarea>
+        <div style="display:flex; gap:10px">
+            <button id="save-btn" class="action-btn edit" style="padding:10px 20px" onclick="handleSaveEdit()">Save & Sync</button>
+            <button class="action-btn" style="padding:10px 20px" onclick="closeEditor()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- CONFIG ---
+    const API_KEY = "AIzaSyAj7iYb869fSQcOtLmq5bu1YH7Hdaxs8rc";
+    const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
+    const TUNNEL = "https://flowers-veteran-pole-understanding.trycloudflare.com";
+    const AUTH_KEY = "WyWVu0XjG";
+
+    // --- STATE ---
+    let apps = [];
+    let currentTab = 'explore';
+    let lastActionTime = 0;
+    let editingId = null;
+    const myId = localStorage.getItem('bns_user') || 'user_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('bns_user', myId);
+
+    // --- SOCKET ---
+    const socket = io(TUNNEL, { auth: { token: AUTH_KEY } });
+
+    socket.on('connect', () => {
+        document.getElementById('status-dot').classList.add('online');
+        socket.emit('RemoteEvent', { type: 'sync_request' });
+    });
+
+    socket.on('RemoteEvent', (packet) => {
+        const data = packet.data;
+        if (data.type === 'app_update') {
+            const idx = apps.findIndex(a => a.id === data.app.id);
+            if (idx > -1) apps[idx] = data.app;
+            else apps.push(data.app);
+            renderList();
+        }
+        if (data.type === 'app_delete') {
+            apps = apps.filter(a => a.id !== data.id);
+            renderList();
+        }
+        if (data.type === 'sync_request') {
+            apps.forEach(a => socket.emit('RemoteEvent', { type: 'app_update', app: a }));
+        }
+    });
+
+    // --- COOLDOWN LOGIC ---
+    function checkCooldown() {
+        const now = Date.now();
+        const diff = now - lastActionTime;
+        if (diff < 10000) {
+            const remaining = Math.ceil((10000 - diff) / 1000);
+            startVisualTimer(remaining);
+            return false;
+        }
+        return true;
+    }
+
+    function startVisualTimer(seconds) {
+        const msg = document.getElementById('cooldown-msg');
+        const span = document.getElementById('timer-secs');
+        const btn = document.getElementById('gen-btn');
+        
+        msg.style.display = 'block';
+        btn.disabled = true;
+        
+        let count = seconds;
+        span.innerText = count;
+
+        const interval = setInterval(() => {
+            count--;
+            span.innerText = count;
+            if (count <= 0) {
+                clearInterval(interval);
+                msg.style.display = 'none';
+                btn.disabled = false;
+            }
+        }, 1000);
+    }
+
+    // --- CORE FUNCTIONS ---
+    async function handleGenerate() {
+        if (!checkCooldown()) return;
+        
+        const prompt = document.getElementById('prompt-input').value;
+        if (!prompt) return;
+
+        const btn = document.getElementById('gen-btn');
+        btn.innerText = "Generating...";
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(GEMINI_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: `Create a complete, single-file HTML/CSS/JS app for: ${prompt}. Return ONLY the raw code, no markdown formatting.` }] }]
+                })
+            });
+
+            const result = await response.json();
+            let code = result.candidates[0].content.parts[0].text;
+            code = code.replace(/```html/g, "").replace(/```/g, "").trim();
+
+            const newApp = {
+                id: 'app_' + Date.now(),
+                owner: myId,
+                name: prompt.substring(0, 25),
+                code: code,
+                created: Date.now()
+            };
+
+            lastActionTime = Date.now();
+            socket.emit('RemoteEvent', { type: 'app_update', app: newApp });
+            loadApp(newApp.id);
+            document.getElementById('prompt-input').value = "";
+            startVisualTimer(10);
+
+        } catch (e) {
+            alert("Error generating app. Check console.");
+            btn.disabled = false;
+        }
+        btn.innerText = "Generate";
+    }
+
+    function handleSaveEdit() {
+        if (!checkCooldown()) return;
+
+        const app = apps.find(a => a.id === editingId);
+        if (app) {
+            app.code = document.getElementById('code-editor').value;
+            lastActionTime = Date.now();
+            socket.emit('RemoteEvent', { type: 'app_update', app: app });
+            loadApp(app.id);
+            closeEditor();
+            startVisualTimer(10);
+        }
+    }
+
+    function deleteApp(id, e) {
+        e.stopPropagation();
+        if (confirm("Delete this app forever?")) {
+            socket.emit('RemoteEvent', { type: 'app_delete', id: id });
+        }
+    }
+
+    function openEditor(id, e) {
+        e.stopPropagation();
+        const app = apps.find(a => a.id === id);
+        editingId = id;
+        document.getElementById('code-editor').value = app.code;
+        document.getElementById('editor-modal').style.display = 'flex';
+    }
+
+    function closeEditor() {
+        document.getElementById('editor-modal').style.display = 'none';
+    }
+
+    function loadApp(id) {
+        const app = apps.find(a => a.id === id);
+        if (!app) return;
+        document.getElementById('preview-frame').srcdoc = app.code;
+        document.getElementById('url-display').value = `https://websim.ai/apps/${app.id}`;
+    }
+
+    function renderList() {
+        const list = document.getElementById('app-list');
+        list.innerHTML = "";
+        
+        const filtered = currentTab === 'mine' ? apps.filter(a => a.owner === myId) : apps;
+
+        filtered.sort((a,b) => b.created - a.created).forEach(app => {
+            const isOwner = app.owner === myId;
+            const card = document.createElement('div');
+            card.className = "app-card";
+            card.onclick = () => loadApp(app.id);
+            card.innerHTML = `
+                <div class="app-card-header">
+                    <span>${app.name}</span>
+                    ${isOwner ? '<span style="color:var(--accent); font-size:0.6rem">OWNER</span>' : ''}
+                </div>
+                ${isOwner ? `
+                    <div class="app-actions">
+                        <div class="action-btn edit" onclick="openEditor('${app.id}', event)">Edit</div>
+                        <div class="action-btn del" onclick="deleteApp('${app.id}', event)">Delete</div>
+                    </div>
+                ` : ''}
+            `;
+            list.appendChild(card);
+        });
+    }
+
+    function switchTab(tab) {
+        currentTab = tab;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        event.target.classList.add('active');
+        renderList();
+    }
+
+    // Enter key support
+    document.getElementById('prompt-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') handleGenerate();
+    });
+</script>
+</body>
+</html>
