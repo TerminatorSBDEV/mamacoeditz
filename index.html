@@ -49,7 +49,7 @@
         }
 
         .chat-panel {
-            position: fixed; bottom: 20px; right: 20px; width: 350px; height: 500px;
+            position: fixed; bottom: 20px; right: 20px; width: 380px; height: 550px;
             background: var(--chat-bg); border: 1px solid var(--border); border-radius: 12px;
             display: none; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 1000;
         }
@@ -59,6 +59,13 @@
         .chat-msg { padding: 8px 12px; border-radius: 8px; max-width: 80%; word-wrap: break-word; }
         .chat-msg.user { align-self: flex-end; background: var(--accent); color: black; }
         .chat-msg.ai { align-self: flex-start; background: #333; color: white; }
+        
+        /* Chat Settings Styles */
+        #chat-settings { padding: 12px; background: #151515; border-bottom: 1px solid var(--border); font-size: 0.75rem; }
+        .chat-cfg-row { display: flex; gap: 10px; margin-bottom: 8px; align-items: center; }
+        .chat-cfg-row select, .chat-cfg-row input, .chat-cfg-row textarea { 
+            background: #000; color: #fff; border: 1px solid #333; padding: 4px; border-radius: 4px; outline: none;
+        }
         
         /* Prompt Bar */
         .prompt-wrap {
@@ -119,24 +126,35 @@
 <!-- Chat Panel -->
 <div id="chat-panel" class="chat-panel">
     <div class="chat-header">
-        <span style="font-weight: bold; color: var(--accent); font-size: 0.8rem;">Qwen 0.5B Instruct</span>
+        <span style="font-weight: bold; color: var(--accent); font-size: 0.8rem;">AI Chat</span>
         <div style="display: flex; gap: 10px; align-items: center;">
-            <span onclick="toggleChatSettings()" style="cursor:pointer; font-size: 0.8rem;">⚙️</span>
+            <span onclick="toggleChatSettings()" style="cursor:pointer; font-size: 0.8rem;">⚙️ Settings</span>
             <span onclick="toggleChat()" style="cursor:pointer; font-weight: bold;">✕</span>
         </div>
     </div>
-    <div id="chat-settings" style="display:none; padding: 10px; background: #222; border-bottom: 1px solid var(--border); font-size: 0.7rem;">
-        <div class="setting-row">
-            <div>
-                <label>Temp</label>
-                <input type="number" id="chat-temp" value="0.9" step="0.1" style="width: 40px; background: #000; color: #fff; border: 1px solid #444;">
-            </div>
-            <div>
-                <label>Max Tokens</label>
-                <input type="number" id="chat-tokens" value="850" style="width: 50px; background: #000; color: #fff; border: 1px solid #444;">
-            </div>
+    
+    <!-- Chat Settings -->
+    <div id="chat-settings" style="display:none;">
+        <div class="chat-cfg-row">
+            <label>Model:</label>
+            <select id="chat-model" style="flex:1">
+                <option value="qwen2.5:1.5b" selected>Qwen 2.5 1.5B (Default)</option>
+                <option value="qwen2.5:3b">Qwen 2.5 3B</option>
+                <option value="qwen2.5:0.5b-instruct">Qwen 2.5 0.5B Instruct</option>
+            </select>
+        </div>
+        <div class="chat-cfg-row">
+            <label>Temp:</label>
+            <input type="number" id="chat-temp" value="0.9" step="0.1" style="width: 45px">
+            <label style="margin-left:10px">Tokens:</label>
+            <input type="number" id="chat-tokens" value="850" style="width: 60px">
+        </div>
+        <div class="chat-cfg-row" style="flex-direction:column; align-items:flex-start">
+            <label>System Instruction:</label>
+            <textarea id="chat-inst" style="width:100%; height:40px; margin-top:4px" placeholder="e.g. You are a helpful assistant.">You are a helpful assistant in the Build n Share app.</textarea>
         </div>
     </div>
+
     <div id="chat-messages" class="chat-messages"></div>
     <div class="chat-input-area">
         <input type="text" id="chat-input" placeholder="Ask anything..." style="flex-grow:1; background:#000; border:1px solid #333; color:#fff; padding:8px; border-radius:4px; outline:none;">
@@ -144,10 +162,10 @@
     </div>
 </div>
 
-<!-- AI Settings Modal -->
+<!-- AI Settings Modal (For App Generation) -->
 <div id="settings-modal" class="modal">
     <div class="modal-content">
-        <h3 style="margin:0; color:var(--accent)">AI Configuration (Qwen 2.5)</h3>
+        <h3 style="margin:0; color:var(--accent)">AI Configuration (App Builder)</h3>
         <div class="setting-group">
             <label>System Instruction (Max 2000 chars)</label>
             <textarea id="cfg-inst" rows="3" maxlength="2000">Create a complete, single-file HTML/CSS/JS app. Return ONLY raw code, no markdown formatting.</textarea>
@@ -190,8 +208,8 @@
 
 <script>
     // --- CONFIG ---
-    const TUNNEL = "https://believes-beer-nickel-commons.trycloudflare.com";
-    const AUTH_KEY = "GCEjYEOQL";
+    const TUNNEL = "https://triple-skin-fraser-oven.trycloudflare.com";
+    const AUTH_KEY = "v5B9zrVS2";
     
     let apps = [];
     let currentTab = 'explore';
@@ -292,15 +310,18 @@
         streamBuffer = "";
         currentReqId = 'chat_' + Date.now();
 
+        const selectedModel = document.getElementById('chat-model').value;
+        const chatInstruction = document.getElementById('chat-inst').value;
+
         const config = {
-            instruction: "You are a helpful assistant in the Build n Share app.",
+            instruction: chatInstruction,
             tokens: parseInt(document.getElementById('chat-tokens').value),
             temp: parseFloat(document.getElementById('chat-temp').value),
             stream: true
         };
 
-        // Prefix for the 0.5b model
-        const promptWithModel = `_qwen2.5:0.5b-instruct:${text}`;
+        // Prefix logic for model switching
+        const promptWithModel = `_${selectedModel}:${text}`;
 
         socket.emit('callai', {
             reqId: currentReqId,
@@ -321,7 +342,7 @@
     }
 
     function finalizeChat(text) {
-        chatHistory.push({ role: 'user', content: streamBuffer }); // Simplified history
+        chatHistory.push({ role: 'user', content: streamBuffer }); 
         currentReqId = null;
     }
 
@@ -350,7 +371,7 @@
             document.getElementById('save-btn').style.display = 'none';
         }
 
-        // Default model is coder, so no prefix needed or use _qwen2.5-coder:1.5b:
+        // App builder uses coder model by default
         socket.emit('callai', {
             reqId: currentReqId,
             prompt: `_qwen2.5-coder:1.5b:${prompt}`,
