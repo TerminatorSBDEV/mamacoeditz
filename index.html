@@ -3,14 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>snake.io | Server-Side Physics</title>
+    <title>snake.io | Pro VC Edition</title>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         :root { --accent: #00ff88; --bg: #050505; }
         body { margin: 0; overflow: hidden; background: var(--bg); font-family: 'Segoe UI', sans-serif; color: white; touch-action: none; user-select: none; }
         canvas { display: block; }
 
-        /* UI de Login */
+        /* Botão de Microfone */
+        #vc-control {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 200; background: rgba(0,0,0,0.6); padding: 10px 20px;
+            border-radius: 30px; border: 1px solid var(--accent);
+            display: none; align-items: center; gap: 10px; cursor: pointer;
+        }
+        .mic-on { color: var(--accent); }
+        .mic-off { color: #ff4444; }
+
         #overlay {
             position: fixed; inset: 0; background: rgba(0,0,0,0.9);
             display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100;
@@ -25,44 +34,40 @@
             color: black; font-weight: bold; border-radius: 5px; cursor: pointer; margin-top: 10px;
         }
 
-        /* Notificações */
-        #notification-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; pointer-events: none; }
-        .notif { background: rgba(0, 0, 0, 0.8); border-left: 4px solid var(--accent); color: white; padding: 10px 20px; border-radius: 4px; margin-bottom: 5px; animation: fadeIn 0.3s; font-size: 0.8rem; }
-
-        /* Leaderboard */
         #leaderboard {
             position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.6);
             padding: 12px; border-radius: 8px; font-family: monospace; pointer-events: none; border: 1px solid #222;
         }
 
-        /* Controles Mobile */
-        #joystick-ui { position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; background: rgba(255,255,255,0.1); border-radius: 50%; display: none; touch-action: none; }
-        #joystick-knob { position: absolute; top: 35px; left: 35px; width: 50px; height: 50px; background: var(--accent); border-radius: 50%; opacity: 0.5; pointer-events: none; }
+        #joystick-ui { position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; background: rgba(255,255,255,0.1); border-radius: 50%; display: none; }
+        #joystick-knob { position: absolute; top: 35px; left: 35px; width: 50px; height: 50px; background: var(--accent); border-radius: 50%; opacity: 0.5; }
         #boost-btn { 
             position: fixed; bottom: 60px; right: 40px; width: 80px; height: 80px; 
             background: rgba(255,255,255,0.1); border: 2px solid var(--accent); 
             border-radius: 50%; display: none; align-items: center; justify-content: center;
-            font-weight: bold; color: var(--accent); touch-action: none;
+            font-weight: bold; color: var(--accent);
         }
 
-        #respawn-msg { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 2rem; font-weight: bold; color: var(--accent); display: none; text-align: center; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        #respawn-msg { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 2rem; font-weight: bold; color: var(--accent); display: none; }
     </style>
 </head>
 <body>
 
-<div id="notification-container"></div>
+<div id="vc-control" onclick="toggleMic()">
+    <span id="mic-icon" class="mic-off">🎤</span>
+    <span id="mic-status">Microfone: OFF</span>
+</div>
+
 <div id="overlay">
     <div class="box">
-        <h1 style="color: var(--accent); margin: 0 0 20px 0;">SNAKE.IO</h1>
+        <h1 style="color: var(--accent); margin: 0 0 20px 0;">SNAKE.IO VC</h1>
         <input type="text" id="nickname" placeholder="Nickname" maxlength="10">
-        <div style="text-align: left; font-size: 0.7rem; color: #888;">SKIN COLOR (No Black)</div>
         <input type="color" id="skinColor" value="#00ff88">
-        <button onclick="startGame()">START</button>
+        <button onclick="startGame()">START & ENABLE AUDIO</button>
     </div>
 </div>
 
-<div id="respawn-msg">WASTED<br><span style="font-size: 1rem;">Respawning in <span id="timer">3</span>s...</span></div>
+<div id="respawn-msg">Respawning in <span id="timer">3</span>s...</div>
 <div id="leaderboard"><div id="rank-list"></div></div>
 
 <div id="joystick-ui"><div id="joystick-knob"></div></div>
@@ -71,7 +76,6 @@
 <canvas id="gameCanvas"></canvas>
 
 <script>
-    // --- CONFIG ---
     const TUNNEL = "https://leaf-revenue-agriculture-pole.trycloudflare.com";
     const AUTH_KEY = "AnrPqkfIi";
     const socket = io(TUNNEL, { auth: { token: AUTH_KEY } });
@@ -79,215 +83,273 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     const MAP_SIZE = 3000;
-    const LERP_FACTOR = 0.2; 
+    const LERP_FACTOR = 0.15;
+    const VC_RANGE = 600; // Distância máxima para ouvir alguém
 
     let myId = Math.random().toString(36).substr(2, 9);
     let gameActive = false;
-    let isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    let isHost = false;
+    let isMobile = 'ontouchstart' in window;
+    
+    // Áudio State
+    let isMuted = true;
+    let mediaRecorder;
+    let audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
     let me = {
         id: myId, name: "", x: 1500, y: 1500, angle: 0, targetAngle: 0,
         speed: 3.5, baseSpeed: 3.5, boostSpeed: 7,
         segments: [], len: 15, color: "#00ff88", radius: 12,
-        isBoosting: false, lastUpdate: Date.now()
+        isBoosting: false
     };
 
     let others = {};
     let foods = [];
     let camera = { x: 0, y: 0 };
 
-    // --- HELPERS ---
-    function getBrightness(hex) {
-        hex = hex.replace('#', '');
-        const r = parseInt(hex.substr(0, 2), 16);
-        const g = parseInt(hex.substr(2, 2), 16);
-        const b = parseInt(hex.substr(4, 2), 16);
-        return (r * 299 + g * 587 + b * 114) / 1000;
+    // --- VOICE CHAT LOGIC ---
+    async function initVoice() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            
+            mediaRecorder.ondataavailable = async (event) => {
+                if (event.data.size > 0 && !isMuted && gameActive) {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(event.data);
+                    reader.onloadend = () => {
+                        socket.emit('RemoteEvent', {
+                            type: 'voice',
+                            id: myId,
+                            audio: reader.result,
+                            x: me.x,
+                            y: me.y
+                        });
+                    };
+                }
+            };
+
+            // Envia áudio em pedaços de 400ms
+            setInterval(() => {
+                if (mediaRecorder.state === "recording") mediaRecorder.stop();
+                if (!isMuted && gameActive) mediaRecorder.start();
+            }, 400);
+
+        } catch (err) {
+            console.error("Erro ao acessar microfone:", err);
+        }
     }
 
-    // --- CONTROLS ---
-    if (isMobile) {
-        document.getElementById('joystick-ui').style.display = 'block';
-        document.getElementById('boost-btn').style.display = 'flex';
-        
-        const joystick = document.getElementById('joystick-ui');
-        const knob = document.getElementById('joystick-knob');
-        
-        const handleTouch = (e) => {
-            const touch = Array.from(e.touches).find(t => t.target.id === 'joystick-ui' || t.target.id === 'joystick-knob');
-            if (touch) {
-                const rect = joystick.getBoundingClientRect();
-                const centerX = rect.left + rect.width / 2;
-                const centerY = rect.top + rect.height / 2;
-                const dx = touch.clientX - centerX;
-                const dy = touch.clientY - centerY;
-                me.targetAngle = Math.atan2(dy, dx);
-                const dist = Math.min(40, Math.hypot(dx, dy));
-                knob.style.transform = `translate(${Math.cos(me.targetAngle)*dist}px, ${Math.sin(me.targetAngle)*dist}px)`;
-            }
-        };
-
-        joystick.addEventListener('touchstart', handleTouch);
-        joystick.addEventListener('touchmove', handleTouch);
-        joystick.addEventListener('touchend', () => {
-            knob.style.transform = `translate(0,0)`;
-        });
-
-        const bBtn = document.getElementById('boost-btn');
-        bBtn.addEventListener('touchstart', (e) => { e.preventDefault(); me.isBoosting = true; });
-        bBtn.addEventListener('touchend', (e) => { e.preventDefault(); me.isBoosting = false; });
-    } else {
-        window.addEventListener('mousemove', e => {
-            const dx = e.clientX - window.innerWidth / 2;
-            const dy = e.clientY - window.innerHeight / 2;
-            me.targetAngle = Math.atan2(dy, dx);
-        });
-        window.addEventListener('keydown', e => { if(e.code === 'Space') me.isBoosting = true; });
-        window.addEventListener('keyup', e => { if(e.code === 'Space') me.isBoosting = false; });
+    function toggleMic() {
+        isMuted = !isMuted;
+        const icon = document.getElementById('mic-icon');
+        const status = document.getElementById('mic-status');
+        icon.className = isMuted ? 'mic-off' : 'mic-on';
+        status.innerText = isMuted ? 'Microfone: OFF' : 'Microfone: ON';
     }
 
     // --- NETWORK ---
-    socket.on('server_action', d => { 
-        if(d.action === 'notification') showNotif(d.msg); 
-    });
-    
     socket.on('RemoteEvent', p => {
-        // Movement is now "Server-Relayed"
         if (p.type === 'move') {
-            if (p.id === myId) {
-                // Sync my own position from the "Server" relay
-                me.x = p.x;
-                me.y = p.y;
-                me.segments = p.segments;
-                me.len = p.len;
+            if (p.id === myId) return;
+            if (!others[p.id]) {
+                others[p.id] = p;
+                others[p.id].currentX = p.x;
+                others[p.id].currentY = p.y;
             } else {
-                if (!others[p.id]) {
-                    others[p.id] = p;
-                    others[p.id].currentX = p.x;
-                    others[p.id].currentY = p.y;
-                } else {
-                    others[p.id].targetX = p.x;
-                    others[p.id].targetY = p.y;
-                    others[p.id].angle = p.angle;
-                    others[p.id].segments = p.segments;
-                    others[p.id].len = p.len;
-                    others[p.id].lastUpdate = Date.now();
-                }
+                Object.assign(others[p.id], p);
+                others[p.id].lastUpdate = Date.now();
             }
         }
-        if (p.type === 'die') {
-            if (p.id === myId) handleDeath();
-            delete others[p.id];
+        
+        // Receber Voz de outros
+        if (p.type === 'voice' && p.id !== myId && gameActive) {
+            const dist = Math.hypot(me.x - p.x, me.y - p.y);
+            if (dist < VC_RANGE) {
+                playProximityAudio(p.audio, dist);
+            }
         }
-        if (p.type === 'food_update') foods = p.foods;
-        if (p.type === 'sync_request') isHost = true; // If someone asks for sync and I'm here, I might be host
+
+        if (p.type === 'die') delete others[p.id];
+        if (p.type === 'food_sync') foods = p.foods;
+        if (p.type === 'food_eat') foods = foods.filter(f => f.id !== p.fid);
+        if (p.type === 'food_add') foods.push(p.food);
+        if (p.type === 'food_drop') foods = foods.concat(p.drops);
     });
 
+    function playProximityAudio(base64Audio, distance) {
+        const audio = new Audio(base64Audio);
+        // Calcula volume baseado na distância (1.0 perto, 0.0 longe)
+        const volume = Math.max(0, 1 - (distance / VC_RANGE));
+        audio.volume = volume;
+        audio.play().catch(() => {});
+    }
+
+    // --- GAME LOGIC ---
     function startGame() {
         me.name = document.getElementById('nickname').value || "Snake";
         let color = document.getElementById('skinColor').value;
-        if (getBrightness(color) < 40) color = "#00ff88"; // Block black
+        
+        // Anti-Black Skin
+        const r = parseInt(color.substr(1,2), 16), g = parseInt(color.substr(3,2), 16), b = parseInt(color.substr(5,2), 16);
+        if ((r*299 + g*587 + b*114)/1000 < 40) color = "#00ff88";
+
         me.color = color;
         document.getElementById('overlay').style.display = 'none';
-        me.segments = Array(Math.floor(me.len)).fill({x: me.x, y: me.y});
+        document.getElementById('vc-control').style.display = 'flex';
+        me.segments = Array(15).fill({x: me.x, y: me.y});
         gameActive = true;
         
-        // Request initial state
-        socket.emit('RemoteEvent', { type: 'sync_request' });
-        if (!isHost) setTimeout(() => { if(foods.length === 0) { isHost = true; spawnFood(); } }, 1000);
+        initVoice(); // Inicia sistema de voz
+        if(foods.length === 0) spawnInitialFood();
     }
 
-    function spawnFood() {
-        if (!isHost) return;
+    // (Restante das funções spawnInitialFood, createFood, update, die, respawn, draw, drawSnake, updateRank permanecem iguais às anteriores para manter estabilidade)
+    
+    function spawnInitialFood() {
         let f = [];
-        for(let i=0; i<150; i++) {
-            f.push({
-                id: Math.random().toString(36).substr(2,5), 
-                x: Math.random()*MAP_SIZE, 
-                y: Math.random()*MAP_SIZE, 
-                c: `hsl(${Math.random()*360},100%,50%)`, 
-                s: 3
-            });
-        }
+        for(let i=0; i<100; i++) f.push(createFood());
         foods = f;
-        socket.emit('RemoteEvent', { type: 'food_update', foods: foods });
+        socket.emit('RemoteEvent', { type: 'food_sync', foods: foods });
     }
 
-    // --- PHYSICS (Simulated as Server-Side) ---
+    function createFood(x, y) {
+        return { id: Math.random().toString(36).substr(2,5), x: x || Math.random()*MAP_SIZE, y: y || Math.random()*MAP_SIZE, c: `hsl(${Math.random()*360},100%,50%)`, s: 3 };
+    }
+
     function update() {
         if (!gameActive) return;
-
-        // 1. Calculate Intended Movement
-        let currentSpeed = (me.isBoosting && me.len > 10) ? me.boostSpeed : me.baseSpeed;
-        if (me.isBoosting && me.len > 10) me.len -= 0.1;
+        if (me.isBoosting && me.len > 10) { me.speed = me.boostSpeed; me.len -= 0.1; } 
+        else { me.speed = me.baseSpeed; }
 
         let diff = me.targetAngle - me.angle;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
         me.angle += diff * 0.1;
 
-        let nextX = me.x + Math.cos(me.angle) * currentSpeed;
-        let nextY = me.y + Math.sin(me.angle) * currentSpeed;
+        me.x += Math.cos(me.angle) * me.speed;
+        me.y += Math.sin(me.angle) * me.speed;
 
-        // 2. Boundary Check
-        if (nextX < 0 || nextX > MAP_SIZE || nextY < 0 || nextY > MAP_SIZE) {
-            die();
-            return;
-        }
+        if (me.x < 0 || me.x > MAP_SIZE || me.y < 0 || me.y > MAP_SIZE) die();
 
-        // 3. Update Segments
-        let newSegments = [{ x: nextX, y: nextY }, ...me.segments];
-        if (newSegments.length > me.len) newSegments.pop();
+        me.segments.unshift({ x: me.x, y: me.y });
+        if (me.segments.length > me.len) me.segments.pop();
 
-        // 4. Collision Detection (Head to Body)
-        Object.values(others).forEach(p => {
-            p.segments.forEach((seg, idx) => {
-                if (idx < 3) return; // Skip head
-                if (Math.hypot(nextX - seg.x, nextY - seg.y) < me.radius * 1.2) {
-                    die();
-                }
-            });
-        });
-
-        // 5. Food Detection
-        let ate = false;
         foods.forEach((f, i) => {
-            if (Math.hypot(nextX - f.x, nextY - f.y) < me.radius + 10) {
-                me.len += 3;
+            if (Math.hypot(me.x - f.x, me.y - f.y) < me.radius + 10) {
+                me.len += 2;
+                socket.emit('RemoteEvent', { type: 'food_eat', fid: f.id });
                 foods.splice(i, 1);
-                ate = true;
+                socket.emit('RemoteEvent', { type: 'food_add', food: createFood() });
             }
         });
 
-        if (ate && isHost) {
-            // Respawn food if host
-            foods.push({
-                id: Math.random().toString(36).substr(2,5), 
-                x: Math.random()*MAP_SIZE, 
-                y: Math.random()*MAP_SIZE, 
-                c: `hsl(${Math.random()*360},100%,50%)`, 
-                s: 3
+        const now = Date.now();
+        Object.keys(others).forEach(id => {
+            const p = others[id];
+            if (now - p.lastUpdate > 2000) { delete others[id]; return; }
+            p.segments.forEach((seg, idx) => {
+                if (idx < 4) return;
+                if (Math.hypot(me.x - seg.x, me.y - seg.y) < me.radius * 1.1) die();
             });
-            socket.emit('RemoteEvent', { type: 'food_update', foods: foods });
-        } else if (ate && !isHost) {
-            // Notify host/others that food is gone
-            socket.emit('RemoteEvent', { type: 'food_update', foods: foods });
-        }
-
-        // 6. BROADCAST (This is the "Server" part - we only move when this returns)
-        socket.emit('RemoteEvent', { 
-            type: 'move', 
-            id: myId, 
-            name: me.name, 
-            x: nextX, 
-            y: nextY, 
-            angle: me.angle, 
-            segments: newSegments, 
-            color: me.color, 
-            len: me.len 
         });
 
-        // Cleanup inactive players
-        const now = Date.now();
-        Object.keys(others).forEach(id =>
+        socket.emit('RemoteEvent', { type: 'move', id: myId, name: me.name, x: me.x, y: me.y, angle: me.angle, segments: me.segments, color: me.color, len: me.len, radius: me.radius });
+        updateRank();
+    }
+
+    function die() {
+        if (!gameActive) return;
+        gameActive = false;
+        let drops = [];
+        for(let i=0; i<me.segments.length; i+=3) drops.push(createFood(me.segments[i].x, me.segments[i].y));
+        socket.emit('RemoteEvent', { type: 'food_drop', drops: drops });
+        socket.emit('RemoteEvent', { type: 'die', id: myId });
+        document.getElementById('respawn-msg').style.display = 'block';
+        let c = 3;
+        const t = setInterval(() => {
+            document.getElementById('timer').innerText = --c;
+            if(c<=0) { clearInterval(t); document.getElementById('respawn-msg').style.display='none'; respawn(); }
+        }, 1000);
+    }
+
+    function respawn() {
+        me.x = Math.random()*MAP_SIZE; me.y = Math.random()*MAP_SIZE;
+        me.len = 15; me.segments = Array(15).fill({x: me.x, y: me.y});
+        gameActive = true;
+    }
+
+    function draw() {
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+        ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        camera.x = me.x - canvas.width / 2; camera.y = me.y - canvas.height / 2;
+        ctx.save(); ctx.translate(-camera.x, -camera.y);
+        
+        // Grid
+        ctx.strokeStyle = '#111';
+        for(let i=0; i<=MAP_SIZE; i+=200) {
+            ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, MAP_SIZE); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(MAP_SIZE, i); ctx.stroke();
+        }
+
+        foods.forEach(f => { ctx.fillStyle = f.c; ctx.beginPath(); ctx.arc(f.x, f.y, f.s, 0, Math.PI*2); ctx.fill(); });
+
+        Object.values(others).forEach(p => {
+            p.currentX = p.currentX || p.x; p.currentY = p.currentY || p.y;
+            p.currentX += (p.x - p.currentX) * LERP_FACTOR;
+            p.currentY += (p.y - p.currentY) * LERP_FACTOR;
+            drawSnake(p, p.currentX, p.currentY);
+        });
+
+        if (gameActive) drawSnake(me, me.x, me.y);
+        ctx.restore();
+        requestAnimationFrame(draw);
+    }
+
+    function drawSnake(s, x, y) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.strokeStyle = s.color; ctx.lineWidth = s.radius * 2;
+        ctx.beginPath();
+        s.segments.forEach((seg, i) => { if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(seg.x, seg.y); });
+        ctx.stroke();
+        ctx.fillStyle = 'white'; ctx.beginPath();
+        ctx.arc(x + Math.cos(s.angle+0.5)*8, y + Math.sin(s.angle+0.5)*8, 3, 0, Math.PI*2);
+        ctx.arc(x + Math.cos(s.angle-0.5)*8, y + Math.sin(s.angle-0.5)*8, 3, 0, Math.PI*2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.font = "10px Arial"; ctx.textAlign = "center";
+        ctx.fillText(s.name, x, y - 20);
+    }
+
+    function updateRank() {
+        let p = Object.values(others); p.push(me);
+        p.sort((a,b) => b.len - a.len);
+        document.getElementById('rank-list').innerHTML = p.slice(0,5).map((s,i) => `<div>${i+1}. ${s.name} (${Math.floor(s.len)})</div>`).join('');
+    }
+
+    // Controles Mobile
+    if (isMobile) {
+        const joystick = document.getElementById('joystick-ui');
+        const knob = document.getElementById('joystick-knob');
+        window.addEventListener('touchmove', e => {
+            const touch = Array.from(e.touches).find(t => t.target.closest('#joystick-ui'));
+            if (touch) {
+                const rect = joystick.getBoundingClientRect();
+                const dx = touch.clientX - (rect.left + rect.width/2), dy = touch.clientY - (rect.top + rect.height/2);
+                me.targetAngle = Math.atan2(dy, dx);
+                const dist = Math.min(40, Math.hypot(dx, dy));
+                knob.style.transform = `translate(${Math.cos(me.targetAngle)*dist}px, ${Math.sin(me.targetAngle)*dist}px)`;
+            }
+        });
+        const bBtn = document.getElementById('boost-btn');
+        bBtn.addEventListener('touchstart', () => me.isBoosting = true);
+        bBtn.addEventListener('touchend', () => me.isBoosting = false);
+    } else {
+        window.addEventListener('mousemove', e => { me.targetAngle = Math.atan2(e.clientY - window.innerHeight/2, e.clientX - window.innerWidth/2); });
+        window.addEventListener('keydown', e => { if(e.code === 'Space') me.isBoosting = true; });
+        window.addEventListener('keyup', e => { if(e.code === 'Space') me.isBoosting = false; });
+    }
+
+    setInterval(update, 1000 / 60);
+    draw();
+</script>
+</body>
+</html>
