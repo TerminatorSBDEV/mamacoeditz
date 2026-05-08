@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>snake.io | Pro Edition</title>
+    <title>snake.io | Server-Side Physics</title>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         :root { --accent: #00ff88; --bg: #050505; }
@@ -27,7 +27,7 @@
 
         /* Notificações */
         #notification-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; pointer-events: none; }
-        .notif { background: rgba(0, 0, 0, 0.8); border-left: 4px solid var(--accent); color: white; padding: 10px 20px; border-radius: 4px; margin-bottom: 5px; animation: fadeIn 0.3s; }
+        .notif { background: rgba(0, 0, 0, 0.8); border-left: 4px solid var(--accent); color: white; padding: 10px 20px; border-radius: 4px; margin-bottom: 5px; animation: fadeIn 0.3s; font-size: 0.8rem; }
 
         /* Leaderboard */
         #leaderboard {
@@ -37,7 +37,7 @@
 
         /* Controles Mobile */
         #joystick-ui { position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; background: rgba(255,255,255,0.1); border-radius: 50%; display: none; touch-action: none; }
-        #joystick-knob { position: absolute; top: 35px; left: 35px; width: 50px; height: 50px; background: var(--accent); border-radius: 50%; opacity: 0.5; }
+        #joystick-knob { position: absolute; top: 35px; left: 35px; width: 50px; height: 50px; background: var(--accent); border-radius: 50%; opacity: 0.5; pointer-events: none; }
         #boost-btn { 
             position: fixed; bottom: 60px; right: 40px; width: 80px; height: 80px; 
             background: rgba(255,255,255,0.1); border: 2px solid var(--accent); 
@@ -45,7 +45,7 @@
             font-weight: bold; color: var(--accent); touch-action: none;
         }
 
-        #respawn-msg { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 2rem; font-weight: bold; color: var(--accent); display: none; }
+        #respawn-msg { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 2rem; font-weight: bold; color: var(--accent); display: none; text-align: center; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
@@ -56,13 +56,13 @@
     <div class="box">
         <h1 style="color: var(--accent); margin: 0 0 20px 0;">SNAKE.IO</h1>
         <input type="text" id="nickname" placeholder="Nickname" maxlength="10">
-        <div style="text-align: left; font-size: 0.7rem; color: #888;">SKIN COLOR</div>
+        <div style="text-align: left; font-size: 0.7rem; color: #888;">SKIN COLOR (No Black)</div>
         <input type="color" id="skinColor" value="#00ff88">
         <button onclick="startGame()">START</button>
     </div>
 </div>
 
-<div id="respawn-msg">Respawning in <span id="timer">3</span>s...</div>
+<div id="respawn-msg">WASTED<br><span style="font-size: 1rem;">Respawning in <span id="timer">3</span>s...</span></div>
 <div id="leaderboard"><div id="rank-list"></div></div>
 
 <div id="joystick-ui"><div id="joystick-knob"></div></div>
@@ -71,6 +71,7 @@
 <canvas id="gameCanvas"></canvas>
 
 <script>
+    // --- CONFIG ---
     const TUNNEL = "https://leaf-revenue-agriculture-pole.trycloudflare.com";
     const AUTH_KEY = "AnrPqkfIi";
     const socket = io(TUNNEL, { auth: { token: AUTH_KEY } });
@@ -78,24 +79,34 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     const MAP_SIZE = 3000;
-    const LERP_FACTOR = 0.15; // Suavidade do movimento alheio
+    const LERP_FACTOR = 0.2; 
 
     let myId = Math.random().toString(36).substr(2, 9);
     let gameActive = false;
-    let isMobile = 'ontouchstart' in window;
+    let isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    let isHost = false;
 
     let me = {
         id: myId, name: "", x: 1500, y: 1500, angle: 0, targetAngle: 0,
         speed: 3.5, baseSpeed: 3.5, boostSpeed: 7,
         segments: [], len: 15, color: "#00ff88", radius: 12,
-        isBoosting: false
+        isBoosting: false, lastUpdate: Date.now()
     };
 
     let others = {};
     let foods = [];
     let camera = { x: 0, y: 0 };
 
-    // --- CONTROLES ---
+    // --- HELPERS ---
+    function getBrightness(hex) {
+        hex = hex.replace('#', '');
+        const r = parseInt(hex.substr(0, 2), 16);
+        const g = parseInt(hex.substr(2, 2), 16);
+        const b = parseInt(hex.substr(4, 2), 16);
+        return (r * 299 + g * 587 + b * 114) / 1000;
+    }
+
+    // --- CONTROLS ---
     if (isMobile) {
         document.getElementById('joystick-ui').style.display = 'block';
         document.getElementById('boost-btn').style.display = 'flex';
@@ -103,21 +114,29 @@
         const joystick = document.getElementById('joystick-ui');
         const knob = document.getElementById('joystick-knob');
         
-        window.addEventListener('touchmove', e => {
-            const touch = Array.from(e.touches).find(t => t.target.closest('#joystick-ui'));
+        const handleTouch = (e) => {
+            const touch = Array.from(e.touches).find(t => t.target.id === 'joystick-ui' || t.target.id === 'joystick-knob');
             if (touch) {
                 const rect = joystick.getBoundingClientRect();
-                const dx = touch.clientX - (rect.left + rect.width/2);
-                const dy = touch.clientY - (rect.top + rect.height/2);
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                const dx = touch.clientX - centerX;
+                const dy = touch.clientY - centerY;
                 me.targetAngle = Math.atan2(dy, dx);
                 const dist = Math.min(40, Math.hypot(dx, dy));
                 knob.style.transform = `translate(${Math.cos(me.targetAngle)*dist}px, ${Math.sin(me.targetAngle)*dist}px)`;
             }
+        };
+
+        joystick.addEventListener('touchstart', handleTouch);
+        joystick.addEventListener('touchmove', handleTouch);
+        joystick.addEventListener('touchend', () => {
+            knob.style.transform = `translate(0,0)`;
         });
 
         const bBtn = document.getElementById('boost-btn');
-        bBtn.addEventListener('touchstart', () => me.isBoosting = true);
-        bBtn.addEventListener('touchend', () => me.isBoosting = false);
+        bBtn.addEventListener('touchstart', (e) => { e.preventDefault(); me.isBoosting = true; });
+        bBtn.addEventListener('touchend', (e) => { e.preventDefault(); me.isBoosting = false; });
     } else {
         window.addEventListener('mousemove', e => {
             const dx = e.clientX - window.innerWidth / 2;
@@ -129,190 +148,146 @@
     }
 
     // --- NETWORK ---
-    socket.on('server_action', d => { if(d.action === 'notification') showNotif(d.msg); });
+    socket.on('server_action', d => { 
+        if(d.action === 'notification') showNotif(d.msg); 
+    });
     
     socket.on('RemoteEvent', p => {
+        // Movement is now "Server-Relayed"
         if (p.type === 'move') {
-            if (p.id === myId) return;
-            if (!others[p.id]) {
-                others[p.id] = p;
-                others[p.id].currentX = p.x;
-                others[p.id].currentY = p.y;
+            if (p.id === myId) {
+                // Sync my own position from the "Server" relay
+                me.x = p.x;
+                me.y = p.y;
+                me.segments = p.segments;
+                me.len = p.len;
             } else {
-                // Atualiza alvos para o LERP
-                others[p.id].targetX = p.x;
-                others[p.id].targetY = p.y;
-                others[p.id].angle = p.angle;
-                others[p.id].segments = p.segments;
-                others[p.id].len = p.len;
-                others[p.id].lastUpdate = Date.now();
+                if (!others[p.id]) {
+                    others[p.id] = p;
+                    others[p.id].currentX = p.x;
+                    others[p.id].currentY = p.y;
+                } else {
+                    others[p.id].targetX = p.x;
+                    others[p.id].targetY = p.y;
+                    others[p.id].angle = p.angle;
+                    others[p.id].segments = p.segments;
+                    others[p.id].len = p.len;
+                    others[p.id].lastUpdate = Date.now();
+                }
             }
         }
-        if (p.type === 'die') delete others[p.id];
-        if (p.type === 'food') foods = p.foods;
-        if (p.type === 'eat') foods = foods.filter(f => f.id !== p.fid);
+        if (p.type === 'die') {
+            if (p.id === myId) handleDeath();
+            delete others[p.id];
+        }
+        if (p.type === 'food_update') foods = p.foods;
+        if (p.type === 'sync_request') isHost = true; // If someone asks for sync and I'm here, I might be host
     });
 
     function startGame() {
         me.name = document.getElementById('nickname').value || "Snake";
         let color = document.getElementById('skinColor').value;
-        // Impedir cor preta (muito escura)
-        if (parseInt(color.replace('#',''), 16) < 0x111111) color = "#00ff88";
+        if (getBrightness(color) < 40) color = "#00ff88"; // Block black
         me.color = color;
         document.getElementById('overlay').style.display = 'none';
         me.segments = Array(Math.floor(me.len)).fill({x: me.x, y: me.y});
         gameActive = true;
-        if(foods.length === 0) spawnFood();
+        
+        // Request initial state
+        socket.emit('RemoteEvent', { type: 'sync_request' });
+        if (!isHost) setTimeout(() => { if(foods.length === 0) { isHost = true; spawnFood(); } }, 1000);
     }
 
     function spawnFood() {
+        if (!isHost) return;
         let f = [];
-        for(let i=0; i<100; i++) f.push({id: Math.random().toString(36).substr(2,5), x: Math.random()*MAP_SIZE, y: Math.random()*MAP_SIZE, c: `hsl(${Math.random()*360},100%,50%)`, s: 3});
+        for(let i=0; i<150; i++) {
+            f.push({
+                id: Math.random().toString(36).substr(2,5), 
+                x: Math.random()*MAP_SIZE, 
+                y: Math.random()*MAP_SIZE, 
+                c: `hsl(${Math.random()*360},100%,50%)`, 
+                s: 3
+            });
+        }
         foods = f;
-        socket.emit('RemoteEvent', { type: 'food', foods: foods });
+        socket.emit('RemoteEvent', { type: 'food_update', foods: foods });
     }
 
+    // --- PHYSICS (Simulated as Server-Side) ---
     function update() {
         if (!gameActive) return;
 
-        // Speed Boost Logic
-        if (me.isBoosting && me.len > 10) {
-            me.speed = me.boostSpeed;
-            me.len -= 0.15; // Perda de pontos ao correr
-        } else {
-            me.speed = me.baseSpeed;
-        }
+        // 1. Calculate Intended Movement
+        let currentSpeed = (me.isBoosting && me.len > 10) ? me.boostSpeed : me.baseSpeed;
+        if (me.isBoosting && me.len > 10) me.len -= 0.1;
 
-        // Smooth Turn
         let diff = me.targetAngle - me.angle;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
         me.angle += diff * 0.1;
 
-        me.x += Math.cos(me.angle) * me.speed;
-        me.y += Math.sin(me.angle) * me.speed;
+        let nextX = me.x + Math.cos(me.angle) * currentSpeed;
+        let nextY = me.y + Math.sin(me.angle) * currentSpeed;
 
-        // Borda
-        if (me.x < 0 || me.x > MAP_SIZE || me.y < 0 || me.y > MAP_SIZE) die();
+        // 2. Boundary Check
+        if (nextX < 0 || nextX > MAP_SIZE || nextY < 0 || nextY > MAP_SIZE) {
+            die();
+            return;
+        }
 
-        me.segments.unshift({ x: me.x, y: me.y });
-        if (me.segments.length > me.len) me.segments.pop();
+        // 3. Update Segments
+        let newSegments = [{ x: nextX, y: nextY }, ...me.segments];
+        if (newSegments.length > me.len) newSegments.pop();
 
-        // Comida
-        foods.forEach((f, i) => {
-            if (Math.hypot(me.x - f.x, me.y - f.y) < me.radius + 10) {
-                me.len += 2;
-                socket.emit('RemoteEvent', { type: 'eat', fid: f.id });
-                foods.splice(i, 1);
-            }
-        });
-
-        // Colisão e Limpeza de Inativos
-        const now = Date.now();
-        Object.keys(others).forEach(id => {
-            const p = others[id];
-            // Remove se não houver update por 2 segundos
-            if (now - p.lastUpdate > 2000) { delete others[id]; return; }
-
+        // 4. Collision Detection (Head to Body)
+        Object.values(others).forEach(p => {
             p.segments.forEach((seg, idx) => {
-                if (idx < 4) return;
-                if (Math.hypot(me.x - seg.x, me.y - seg.y) < me.radius * 1.2) die();
+                if (idx < 3) return; // Skip head
+                if (Math.hypot(nextX - seg.x, nextY - seg.y) < me.radius * 1.2) {
+                    die();
+                }
             });
         });
 
-        socket.emit('RemoteEvent', { type: 'move', id: myId, name: me.name, x: me.x, y: me.y, angle: me.angle, segments: me.segments, color: me.color, len: me.len });
-        updateRank();
-    }
+        // 5. Food Detection
+        let ate = false;
+        foods.forEach((f, i) => {
+            if (Math.hypot(nextX - f.x, nextY - f.y) < me.radius + 10) {
+                me.len += 3;
+                foods.splice(i, 1);
+                ate = true;
+            }
+        });
 
-    function die() {
-        gameActive = false;
-        socket.emit('RemoteEvent', { type: 'die', id: myId });
-        const msg = document.getElementById('respawn-msg');
-        msg.style.display = 'block';
-        let c = 3;
-        const t = setInterval(() => {
-            document.getElementById('timer').innerText = --c;
-            if(c<=0) { clearInterval(t); msg.style.display='none'; respawn(); }
-        }, 1000);
-    }
-
-    function respawn() {
-        me.x = Math.random()*MAP_SIZE; me.y = Math.random()*MAP_SIZE;
-        me.len = 15; me.segments = Array(15).fill({x: me.x, y: me.y});
-        gameActive = true;
-    }
-
-    function draw() {
-        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-        ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        camera.x = me.x - canvas.width / 2;
-        camera.y = me.y - canvas.height / 2;
-
-        ctx.save();
-        ctx.translate(-camera.x, -camera.y);
-
-        // Grid
-        ctx.strokeStyle = '#111';
-        for(let i=0; i<=MAP_SIZE; i+=200) {
-            ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, MAP_SIZE); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(MAP_SIZE, i); ctx.stroke();
+        if (ate && isHost) {
+            // Respawn food if host
+            foods.push({
+                id: Math.random().toString(36).substr(2,5), 
+                x: Math.random()*MAP_SIZE, 
+                y: Math.random()*MAP_SIZE, 
+                c: `hsl(${Math.random()*360},100%,50%)`, 
+                s: 3
+            });
+            socket.emit('RemoteEvent', { type: 'food_update', foods: foods });
+        } else if (ate && !isHost) {
+            // Notify host/others that food is gone
+            socket.emit('RemoteEvent', { type: 'food_update', foods: foods });
         }
 
-        foods.forEach(f => {
-            ctx.fillStyle = f.c; ctx.beginPath(); ctx.arc(f.x, f.y, f.s, 0, Math.PI*2); ctx.fill();
+        // 6. BROADCAST (This is the "Server" part - we only move when this returns)
+        socket.emit('RemoteEvent', { 
+            type: 'move', 
+            id: myId, 
+            name: me.name, 
+            x: nextX, 
+            y: nextY, 
+            angle: me.angle, 
+            segments: newSegments, 
+            color: me.color, 
+            len: me.len 
         });
 
-        // Draw Others with LERP
-        Object.values(others).forEach(p => {
-            // Interpolação Linear
-            p.currentX += (p.targetX - p.currentX) * LERP_FACTOR;
-            p.currentY += (p.targetY - p.currentY) * LERP_FACTOR;
-            drawSnake(p, p.currentX, p.currentY);
-        });
-
-        if (gameActive) drawSnake(me, me.x, me.y);
-
-        ctx.restore();
-        requestAnimationFrame(draw);
-    }
-
-    function drawSnake(s, x, y) {
-        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-        ctx.strokeStyle = s.color; ctx.lineWidth = s.radius * 2;
-        ctx.beginPath();
-        s.segments.forEach((seg, i) => {
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(seg.x, seg.y);
-        });
-        ctx.stroke();
-        
-        // Olhos
-        ctx.fillStyle = 'white';
-        ctx.beginPath();
-        ctx.arc(x + Math.cos(s.angle+0.5)*8, y + Math.sin(s.angle+0.5)*8, 3, 0, Math.PI*2);
-        ctx.arc(x + Math.cos(s.angle-0.5)*8, y + Math.sin(s.angle-0.5)*8, 3, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.fillStyle = "rgba(255,255,255,0.3)";
-        ctx.font = "10px Arial"; ctx.textAlign = "center";
-        ctx.fillText(s.name, x, y - 20);
-    }
-
-    function updateRank() {
-        let p = Object.values(others); p.push(me);
-        p.sort((a,b) => b.len - a.len);
-        document.getElementById('rank-list').innerHTML = p.slice(0,5).map((s,i) => `<div>${i+1}. ${s.name} (${Math.floor(s.len)})</div>`).join('');
-    }
-
-    function showNotif(m) {
-        const c = document.getElementById('notification-container');
-        const d = document.createElement('div'); d.className = 'notif'; d.innerText = m;
-        c.appendChild(d); setTimeout(() => d.remove(), 4000);
-    }
-
-    setInterval(update, 1000 / 60);
-    draw();
-</script>
-</body>
-</html>
+        // Cleanup inactive players
+        const now = Date.now();
+        Object.keys(others).forEach(id =>
