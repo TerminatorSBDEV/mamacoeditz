@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>snake.io | Multiplayer</title>
+    <title>snake.io | Pro Edition</title>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         :root { --accent: #00ff88; --bg: #050505; }
-        body { margin: 0; overflow: hidden; background: var(--bg); font-family: 'Segoe UI', sans-serif; color: white; touch-action: none; }
+        body { margin: 0; overflow: hidden; background: var(--bg); font-family: 'Segoe UI', sans-serif; color: white; touch-action: none; user-select: none; }
         canvas { display: block; }
 
         /* UI de Login */
@@ -15,288 +15,236 @@
             position: fixed; inset: 0; background: rgba(0,0,0,0.9);
             display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100;
         }
-        .box { background: #111; padding: 30px; border-radius: 15px; border: 2px solid var(--accent); text-align: center; width: 280px; box-shadow: 0 0 20px rgba(0,255,136,0.2); }
-        input, select { 
+        .box { background: #111; padding: 30px; border-radius: 15px; border: 2px solid var(--accent); text-align: center; width: 280px; }
+        input { 
             width: 100%; padding: 12px; margin: 10px 0; background: #000; 
             border: 1px solid #333; color: white; border-radius: 5px; box-sizing: border-box; outline: none;
         }
-        input:focus { border-color: var(--accent); }
         button { 
             width: 100%; padding: 12px; background: var(--accent); border: none; 
             color: black; font-weight: bold; border-radius: 5px; cursor: pointer; margin-top: 10px;
         }
 
-        /* Notificações do Servidor */
-        #notification-container {
-            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-            z-index: 1000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;
-        }
-        .notif {
-            background: rgba(0, 0, 0, 0.8); border-left: 4px solid var(--accent);
-            color: white; padding: 12px 20px; border-radius: 4px; font-size: 0.9rem;
-            animation: slideIn 0.3s ease-out; min-width: 250px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-        }
+        /* Notificações */
+        #notification-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; pointer-events: none; }
+        .notif { background: rgba(0, 0, 0, 0.8); border-left: 4px solid var(--accent); color: white; padding: 10px 20px; border-radius: 4px; margin-bottom: 5px; animation: fadeIn 0.3s; }
 
         /* Leaderboard */
         #leaderboard {
             position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.6);
-            padding: 12px; border-radius: 8px; font-family: 'Courier New', monospace; pointer-events: none; border: 1px solid #222;
+            padding: 12px; border-radius: 8px; font-family: monospace; pointer-events: none; border: 1px solid #222;
         }
 
-        /* Joystick Mobile */
-        #joystick-container {
-            position: fixed; bottom: 50px; left: 50px; width: 120px; height: 120px;
-            background: rgba(255,255,255,0.05); border: 2px solid rgba(255,255,255,0.1);
-            border-radius: 50%; display: none; z-index: 50;
-        }
-        #joystick-knob {
-            position: absolute; top: 35px; left: 35px; width: 50px; height: 50px;
-            background: var(--accent); opacity: 0.5; border-radius: 50%;
-        }
-
-        /* Respawn Timer */
-        #respawn-msg {
-            position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%);
-            font-size: 2rem; font-weight: bold; color: var(--accent); display: none; z-index: 110; text-shadow: 0 0 10px black;
+        /* Controles Mobile */
+        #joystick-ui { position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; background: rgba(255,255,255,0.1); border-radius: 50%; display: none; touch-action: none; }
+        #joystick-knob { position: absolute; top: 35px; left: 35px; width: 50px; height: 50px; background: var(--accent); border-radius: 50%; opacity: 0.5; }
+        #boost-btn { 
+            position: fixed; bottom: 60px; right: 40px; width: 80px; height: 80px; 
+            background: rgba(255,255,255,0.1); border: 2px solid var(--accent); 
+            border-radius: 50%; display: none; align-items: center; justify-content: center;
+            font-weight: bold; color: var(--accent); touch-action: none;
         }
 
-        @keyframes slideIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        #respawn-msg { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 2rem; font-weight: bold; color: var(--accent); display: none; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body>
 
 <div id="notification-container"></div>
-
 <div id="overlay">
     <div class="box">
-        <h1 style="color: var(--accent); margin-top: 0; letter-spacing: 2px;">SNAKE.IO</h1>
-        <input type="text" id="nickname" placeholder="Nickname" maxlength="12">
-        <div style="text-align: left; margin-top: 10px;">
-            <label style="font-size: 0.7rem; color: #888; text-transform: uppercase;">Skin Color</label>
-            <input type="color" id="skinColor" value="#00ff88">
-        </div>
-        <button onclick="startGame()">START GAME</button>
+        <h1 style="color: var(--accent); margin: 0 0 20px 0;">SNAKE.IO</h1>
+        <input type="text" id="nickname" placeholder="Nickname" maxlength="10">
+        <div style="text-align: left; font-size: 0.7rem; color: #888;">SKIN COLOR</div>
+        <input type="color" id="skinColor" value="#00ff88">
+        <button onclick="startGame()">START</button>
     </div>
 </div>
 
 <div id="respawn-msg">Respawning in <span id="timer">3</span>s...</div>
+<div id="leaderboard"><div id="rank-list"></div></div>
 
-<div id="leaderboard">
-    <div style="color: var(--accent); border-bottom: 1px solid #444; margin-bottom: 5px; font-weight: bold;">LEADERBOARD</div>
-    <div id="rank-list"></div>
-</div>
-
-<div id="joystick-container">
-    <div id="joystick-knob"></div>
-</div>
+<div id="joystick-ui"><div id="joystick-knob"></div></div>
+<div id="boost-btn">BOOST</div>
 
 <canvas id="gameCanvas"></canvas>
 
 <script>
-    // --- CONFIGURAÇÃO SERVIDOR ---
     const TUNNEL = "https://leaf-revenue-agriculture-pole.trycloudflare.com";
     const AUTH_KEY = "AnrPqkfIi";
     const socket = io(TUNNEL, { auth: { token: AUTH_KEY } });
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
-    const MAP_SIZE = 3500;
-    const HITBOX_REDUCTION = 0.7; // Hitbox menor para jogabilidade justa
+    const MAP_SIZE = 3000;
+    const LERP_FACTOR = 0.15; // Suavidade do movimento alheio
 
     let myId = Math.random().toString(36).substr(2, 9);
     let gameActive = false;
-    let isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    let isMobile = 'ontouchstart' in window;
 
     let me = {
-        id: myId,
-        name: "",
-        x: Math.random() * MAP_SIZE,
-        y: Math.random() * MAP_SIZE,
-        angle: Math.random() * Math.PI * 2,
-        targetAngle: 0,
-        speed: 3.8,
-        turnSpeed: 0.09,
-        segments: [],
-        len: 12,
-        color: "#00ff88",
-        radius: 12
+        id: myId, name: "", x: 1500, y: 1500, angle: 0, targetAngle: 0,
+        speed: 3.5, baseSpeed: 3.5, boostSpeed: 7,
+        segments: [], len: 15, color: "#00ff88", radius: 12,
+        isBoosting: false
     };
 
     let others = {};
     let foods = [];
     let camera = { x: 0, y: 0 };
 
-    // --- NOTIFICAÇÕES DO SERVIDOR ---
-    socket.on('server_action', (data) => {
-        if (data.action === 'notification') {
-            showNotification(data.msg);
-        }
-    });
-
-    function showNotification(msg) {
-        const container = document.getElementById('notification-container');
-        const div = document.createElement('div');
-        div.className = 'notif';
-        div.innerText = msg;
-        container.appendChild(div);
-        setTimeout(() => div.remove(), 6000);
-    }
-
     // --- CONTROLES ---
     if (isMobile) {
-        document.getElementById('joystick-container').style.display = 'block';
+        document.getElementById('joystick-ui').style.display = 'block';
+        document.getElementById('boost-btn').style.display = 'flex';
+        
+        const joystick = document.getElementById('joystick-ui');
+        const knob = document.getElementById('joystick-knob');
+        
         window.addEventListener('touchmove', e => {
-            const touch = e.touches[0];
-            const rect = document.getElementById('joystick-container').getBoundingClientRect();
-            const centerX = rect.left + rect.width / 2;
-            const centerY = rect.top + rect.height / 2;
-            const dx = touch.clientX - centerX;
-            const dy = touch.clientY - centerY;
-            me.targetAngle = Math.atan2(dy, dx);
-            
-            const knob = document.getElementById('joystick-knob');
-            const dist = Math.min(40, Math.hypot(dx, dy));
-            knob.style.transform = `translate(${Math.cos(me.targetAngle)*dist}px, ${Math.sin(me.targetAngle)*dist}px)`;
+            const touch = Array.from(e.touches).find(t => t.target.closest('#joystick-ui'));
+            if (touch) {
+                const rect = joystick.getBoundingClientRect();
+                const dx = touch.clientX - (rect.left + rect.width/2);
+                const dy = touch.clientY - (rect.top + rect.height/2);
+                me.targetAngle = Math.atan2(dy, dx);
+                const dist = Math.min(40, Math.hypot(dx, dy));
+                knob.style.transform = `translate(${Math.cos(me.targetAngle)*dist}px, ${Math.sin(me.targetAngle)*dist}px)`;
+            }
         });
+
+        const bBtn = document.getElementById('boost-btn');
+        bBtn.addEventListener('touchstart', () => me.isBoosting = true);
+        bBtn.addEventListener('touchend', () => me.isBoosting = false);
     } else {
         window.addEventListener('mousemove', e => {
             const dx = e.clientX - window.innerWidth / 2;
             const dy = e.clientY - window.innerHeight / 2;
             me.targetAngle = Math.atan2(dy, dx);
         });
+        window.addEventListener('keydown', e => { if(e.code === 'Space') me.isBoosting = true; });
+        window.addEventListener('keyup', e => { if(e.code === 'Space') me.isBoosting = false; });
     }
 
-    // --- NETWORKING ---
-    socket.on('RemoteEvent', (packet) => {
-        if (packet.type === 'move') {
-            if (packet.id !== myId) others[packet.id] = packet;
+    // --- NETWORK ---
+    socket.on('server_action', d => { if(d.action === 'notification') showNotif(d.msg); });
+    
+    socket.on('RemoteEvent', p => {
+        if (p.type === 'move') {
+            if (p.id === myId) return;
+            if (!others[p.id]) {
+                others[p.id] = p;
+                others[p.id].currentX = p.x;
+                others[p.id].currentY = p.y;
+            } else {
+                // Atualiza alvos para o LERP
+                others[p.id].targetX = p.x;
+                others[p.id].targetY = p.y;
+                others[p.id].angle = p.angle;
+                others[p.id].segments = p.segments;
+                others[p.id].len = p.len;
+                others[p.id].lastUpdate = Date.now();
+            }
         }
-        if (packet.type === 'die') {
-            delete others[packet.id];
-            if (packet.id === myId) handleDeath();
-        }
-        if (packet.type === 'food_sync') foods = packet.foods;
-        if (packet.type === 'eat') foods = foods.filter(f => f.id !== packet.fid);
+        if (p.type === 'die') delete others[p.id];
+        if (p.type === 'food') foods = p.foods;
+        if (p.type === 'eat') foods = foods.filter(f => f.id !== p.fid);
     });
 
     function startGame() {
         me.name = document.getElementById('nickname').value || "Snake";
-        me.color = document.getElementById('skinColor').value;
+        let color = document.getElementById('skinColor').value;
+        // Impedir cor preta (muito escura)
+        if (parseInt(color.replace('#',''), 16) < 0x111111) color = "#00ff88";
+        me.color = color;
         document.getElementById('overlay').style.display = 'none';
-        me.segments = Array(me.len).fill({x: me.x, y: me.y});
+        me.segments = Array(Math.floor(me.len)).fill({x: me.x, y: me.y});
         gameActive = true;
-        if (foods.length === 0) spawnFood();
-    }
-
-    function handleDeath() {
-        if (!gameActive) return;
-        gameActive = false;
-        const msg = document.getElementById('respawn-msg');
-        const timerSpan = document.getElementById('timer');
-        msg.style.display = 'block';
-        
-        let count = 3;
-        timerSpan.innerText = count;
-        const interval = setInterval(() => {
-            count--;
-            timerSpan.innerText = count;
-            if (count <= 0) {
-                clearInterval(interval);
-                msg.style.display = 'none';
-                respawn();
-            }
-        }, 1000);
-    }
-
-    function respawn() {
-        me.x = Math.random() * MAP_SIZE;
-        me.y = Math.random() * MAP_SIZE;
-        me.len = 12;
-        me.segments = Array(me.len).fill({x: me.x, y: me.y});
-        gameActive = true;
+        if(foods.length === 0) spawnFood();
     }
 
     function spawnFood() {
         let f = [];
-        for(let i=0; i<150; i++) {
-            f.push({
-                id: Math.random().toString(36).substr(2, 5),
-                x: Math.random() * MAP_SIZE,
-                y: Math.random() * MAP_SIZE,
-                c: `hsl(${Math.random()*360}, 100%, 50%)`,
-                s: Math.random() * 3 + 2
-            });
-        }
+        for(let i=0; i<100; i++) f.push({id: Math.random().toString(36).substr(2,5), x: Math.random()*MAP_SIZE, y: Math.random()*MAP_SIZE, c: `hsl(${Math.random()*360},100%,50%)`, s: 3});
         foods = f;
-        socket.emit('RemoteEvent', { type: 'food_sync', foods: foods });
+        socket.emit('RemoteEvent', { type: 'food', foods: foods });
     }
 
     function update() {
         if (!gameActive) return;
 
-        // Curva Suave
+        // Speed Boost Logic
+        if (me.isBoosting && me.len > 10) {
+            me.speed = me.boostSpeed;
+            me.len -= 0.15; // Perda de pontos ao correr
+        } else {
+            me.speed = me.baseSpeed;
+        }
+
+        // Smooth Turn
         let diff = me.targetAngle - me.angle;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        me.angle += diff * me.turnSpeed;
+        me.angle += diff * 0.1;
 
         me.x += Math.cos(me.angle) * me.speed;
         me.y += Math.sin(me.angle) * me.speed;
 
-        // Colisão com bordas
-        if (me.x < 0 || me.x > MAP_SIZE || me.y < 0 || me.y > MAP_SIZE) {
-            socket.emit('RemoteEvent', { type: 'die', id: myId });
-            handleDeath();
-        }
+        // Borda
+        if (me.x < 0 || me.x > MAP_SIZE || me.y < 0 || me.y > MAP_SIZE) die();
 
         me.segments.unshift({ x: me.x, y: me.y });
         if (me.segments.length > me.len) me.segments.pop();
 
-        // Comer Comida
+        // Comida
         foods.forEach((f, i) => {
             if (Math.hypot(me.x - f.x, me.y - f.y) < me.radius + 10) {
-                me.len += 1.5;
+                me.len += 2;
                 socket.emit('RemoteEvent', { type: 'eat', fid: f.id });
                 foods.splice(i, 1);
             }
         });
 
-        // Colisão com Outros (Hitbox Justa)
-        Object.values(others).forEach(enemy => {
-            enemy.segments.forEach((seg, idx) => {
-                if (idx < 3) return; // Ignora a própria cabeça do inimigo
-                const dist = Math.hypot(me.x - seg.x, me.y - seg.y);
-                if (dist < (me.radius + enemy.radius) * HITBOX_REDUCTION) {
-                    socket.emit('RemoteEvent', { type: 'die', id: myId });
-                    handleDeath();
-                }
+        // Colisão e Limpeza de Inativos
+        const now = Date.now();
+        Object.keys(others).forEach(id => {
+            const p = others[id];
+            // Remove se não houver update por 2 segundos
+            if (now - p.lastUpdate > 2000) { delete others[id]; return; }
+
+            p.segments.forEach((seg, idx) => {
+                if (idx < 4) return;
+                if (Math.hypot(me.x - seg.x, me.y - seg.y) < me.radius * 1.2) die();
             });
         });
 
-        socket.emit('RemoteEvent', {
-            type: 'move', id: myId, name: me.name, x: me.x, y: me.y, 
-            angle: me.angle, segments: me.segments, color: me.color, 
-            radius: me.radius, len: me.len
-        });
-
-        updateLeaderboard();
+        socket.emit('RemoteEvent', { type: 'move', id: myId, name: me.name, x: me.x, y: me.y, angle: me.angle, segments: me.segments, color: me.color, len: me.len });
+        updateRank();
     }
 
-    function updateLeaderboard() {
-        let players = Object.values(others);
-        players.push(me);
-        players.sort((a, b) => b.len - a.len);
-        const list = document.getElementById('rank-list');
-        list.innerHTML = players.slice(0, 5).map((p, i) => 
-            `<div style="font-size:0.8rem; margin-bottom:3px;">${i+1}. ${p.name || 'Snake'} (${Math.floor(p.len)})</div>`
-        ).join('');
+    function die() {
+        gameActive = false;
+        socket.emit('RemoteEvent', { type: 'die', id: myId });
+        const msg = document.getElementById('respawn-msg');
+        msg.style.display = 'block';
+        let c = 3;
+        const t = setInterval(() => {
+            document.getElementById('timer').innerText = --c;
+            if(c<=0) { clearInterval(t); msg.style.display='none'; respawn(); }
+        }, 1000);
+    }
+
+    function respawn() {
+        me.x = Math.random()*MAP_SIZE; me.y = Math.random()*MAP_SIZE;
+        me.len = 15; me.segments = Array(15).fill({x: me.x, y: me.y});
+        gameActive = true;
     }
 
     function draw() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        ctx.fillStyle = '#050505';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+        ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         camera.x = me.x - canvas.width / 2;
         camera.y = me.y - canvas.height / 2;
@@ -304,56 +252,63 @@
         ctx.save();
         ctx.translate(-camera.x, -camera.y);
 
-        // Grade
+        // Grid
         ctx.strokeStyle = '#111';
-        for(let i=0; i<=MAP_SIZE; i+=150) {
+        for(let i=0; i<=MAP_SIZE; i+=200) {
             ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, MAP_SIZE); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(MAP_SIZE, i); ctx.stroke();
         }
 
-        // Comida
         foods.forEach(f => {
-            ctx.fillStyle = f.c;
-            ctx.shadowBlur = 8; ctx.shadowColor = f.c;
-            ctx.beginPath(); ctx.arc(f.x, f.y, f.s, 0, Math.PI*2); ctx.fill();
-            ctx.shadowBlur = 0;
+            ctx.fillStyle = f.c; ctx.beginPath(); ctx.arc(f.x, f.y, f.s, 0, Math.PI*2); ctx.fill();
         });
 
-        // Outras Snakes
-        Object.values(others).forEach(enemy => drawSnake(enemy));
+        // Draw Others with LERP
+        Object.values(others).forEach(p => {
+            // Interpolação Linear
+            p.currentX += (p.targetX - p.currentX) * LERP_FACTOR;
+            p.currentY += (p.targetY - p.currentY) * LERP_FACTOR;
+            drawSnake(p, p.currentX, p.currentY);
+        });
 
-        // Minha Snake
-        if (gameActive) drawSnake(me);
+        if (gameActive) drawSnake(me, me.x, me.y);
 
         ctx.restore();
         requestAnimationFrame(draw);
     }
 
-    function drawSnake(s) {
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.strokeStyle = s.color;
-        ctx.lineWidth = s.radius * 2;
-
+    function drawSnake(s, x, y) {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.strokeStyle = s.color; ctx.lineWidth = s.radius * 2;
         ctx.beginPath();
         s.segments.forEach((seg, i) => {
-            if (i === 0) ctx.moveTo(seg.x, seg.y);
+            if (i === 0) ctx.moveTo(x, y);
             else ctx.lineTo(seg.x, seg.y);
         });
         ctx.stroke();
-
+        
         // Olhos
-        const head = s.segments[0];
         ctx.fillStyle = 'white';
         ctx.beginPath();
-        ctx.arc(head.x + Math.cos(s.angle + 0.5) * 6, head.y + Math.sin(s.angle + 0.5) * 6, 3, 0, Math.PI*2);
-        ctx.arc(head.x + Math.cos(s.angle - 0.5) * 6, head.y + Math.sin(s.angle - 0.5) * 6, 3, 0, Math.PI*2);
+        ctx.arc(x + Math.cos(s.angle+0.5)*8, y + Math.sin(s.angle+0.5)*8, 3, 0, Math.PI*2);
+        ctx.arc(x + Math.cos(s.angle-0.5)*8, y + Math.sin(s.angle-0.5)*8, 3, 0, Math.PI*2);
         ctx.fill();
-        
-        ctx.fillStyle = "rgba(255,255,255,0.4)";
-        ctx.font = "bold 12px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText(s.name, head.x, head.y - 20);
+
+        ctx.fillStyle = "rgba(255,255,255,0.3)";
+        ctx.font = "10px Arial"; ctx.textAlign = "center";
+        ctx.fillText(s.name, x, y - 20);
+    }
+
+    function updateRank() {
+        let p = Object.values(others); p.push(me);
+        p.sort((a,b) => b.len - a.len);
+        document.getElementById('rank-list').innerHTML = p.slice(0,5).map((s,i) => `<div>${i+1}. ${s.name} (${Math.floor(s.len)})</div>`).join('');
+    }
+
+    function showNotif(m) {
+        const c = document.getElementById('notification-container');
+        const d = document.createElement('div'); d.className = 'notif'; d.innerText = m;
+        c.appendChild(d); setTimeout(() => d.remove(), 4000);
     }
 
     setInterval(update, 1000 / 60);
