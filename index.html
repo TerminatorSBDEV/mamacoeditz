@@ -1,483 +1,363 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Build n Share | Local AI Edition</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>snake.io | Multiplayer</title>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
-        :root {
-            --bg: #0a0a0a; --panel: #121212; --accent: #00ff88;
-            --text: #ffffff; --border: #222; --error: #ff4444;
-            --chat-bg: #1a1a1a;
-        }
-        body, html {
-            margin: 0; padding: 0; height: 100%;
-            font-family: 'Inter', system-ui, sans-serif;
-            background: var(--bg); color: var(--text); overflow: hidden;
-        }
-        .container { display: grid; grid-template-columns: 260px 1fr; height: 100vh; }
-        
-        /* Sidebar */
-        .sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 15px; }
-        .logo { font-size: 1.1rem; font-weight: bold; color: var(--accent); margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
-        .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #333; }
-        .status-dot.online { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-        
-        .nav-tabs { display: flex; background: #000; padding: 5px; border-radius: 5px; margin-bottom: 15px; }
-        .tab-btn { flex: 1; background: transparent; border: none; color: #666; padding: 8px; cursor: pointer; font-size: 0.8rem; border-radius: 4px; }
-        .tab-btn.active { background: #222; color: white; }
-        
-        .app-list { flex-grow: 1; overflow-y: auto; }
-        .app-card { padding: 12px; background: #1a1a1a; border-radius: 6px; margin-bottom: 10px; cursor: pointer; border: 1px solid transparent; }
-        .app-card:hover { border-color: var(--accent); }
-        .app-card-name { font-size: 0.85rem; font-weight: 500; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .app-actions { display: flex; gap: 10px; }
-        .action-link { font-size: 0.7rem; color: #888; text-decoration: underline; cursor: pointer; }
-        .action-link:hover { color: var(--accent); }
+        :root { --accent: #00ff88; --bg: #050505; }
+        body { margin: 0; overflow: hidden; background: var(--bg); font-family: 'Segoe UI', sans-serif; color: white; touch-action: none; }
+        canvas { display: block; }
 
-        /* Main Content */
-        .main { display: flex; flex-direction: column; position: relative; background: #000; }
-        .browser-header { background: var(--panel); padding: 10px; display: flex; gap: 10px; border-bottom: 1px solid var(--border); align-items: center;}
-        .url-bar { flex-grow: 1; background: #000; border: 1px solid var(--border); border-radius: 4px; padding: 6px 12px; color: var(--accent); font-family: monospace; font-size: 0.8rem; }
-        .preview-frame { flex-grow: 1; background: white; border: none; }
-
-        /* Chat Button & Panel */
-        .chat-toggle-btn {
-            background: var(--accent); color: black; border: none; padding: 8px 15px;
-            border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 0.8rem;
+        /* UI de Login */
+        #overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.9);
+            display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100;
+        }
+        .box { background: #111; padding: 30px; border-radius: 15px; border: 2px solid var(--accent); text-align: center; width: 280px; box-shadow: 0 0 20px rgba(0,255,136,0.2); }
+        input, select { 
+            width: 100%; padding: 12px; margin: 10px 0; background: #000; 
+            border: 1px solid #333; color: white; border-radius: 5px; box-sizing: border-box; outline: none;
+        }
+        input:focus { border-color: var(--accent); }
+        button { 
+            width: 100%; padding: 12px; background: var(--accent); border: none; 
+            color: black; font-weight: bold; border-radius: 5px; cursor: pointer; margin-top: 10px;
         }
 
-        .chat-panel {
-            position: fixed; bottom: 20px; right: 20px; width: 380px; height: 550px;
-            background: var(--chat-bg); border: 1px solid var(--border); border-radius: 12px;
-            display: none; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 1000;
+        /* Notificações do Servidor */
+        #notification-container {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 1000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;
         }
-        .chat-header { padding: 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: #222; border-radius: 12px 12px 0 0; }
-        .chat-messages { flex-grow: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; font-size: 0.9rem; }
-        .chat-input-area { padding: 10px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
-        .chat-msg { padding: 8px 12px; border-radius: 8px; max-width: 80%; word-wrap: break-word; }
-        .chat-msg.user { align-self: flex-end; background: var(--accent); color: black; }
-        .chat-msg.ai { align-self: flex-start; background: #333; color: white; }
-        
-        /* Chat Settings Styles */
-        #chat-settings { padding: 12px; background: #151515; border-bottom: 1px solid var(--border); font-size: 0.75rem; }
-        .chat-cfg-row { display: flex; gap: 10px; margin-bottom: 8px; align-items: center; }
-        .chat-cfg-row select, .chat-cfg-row input, .chat-cfg-row textarea { 
-            background: #000; color: #fff; border: 1px solid #333; padding: 4px; border-radius: 4px; outline: none;
+        .notif {
+            background: rgba(0, 0, 0, 0.8); border-left: 4px solid var(--accent);
+            color: white; padding: 12px 20px; border-radius: 4px; font-size: 0.9rem;
+            animation: slideIn 0.3s ease-out; min-width: 250px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
-        
-        /* Prompt Bar */
-        .prompt-wrap {
-            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
-            width: 85%; max-width: 800px; background: rgba(18, 18, 18, 0.95);
-            backdrop-filter: blur(10px); border: 1px solid var(--border);
-            border-radius: 12px; padding: 12px; box-shadow: 0 15px 40px rgba(0,0,0,0.7);
-        }
-        .prompt-input-row { display: flex; gap: 10px; }
-        input#prompt-input { flex-grow: 1; background: transparent; border: none; color: white; outline: none; font-size: 1rem; }
-        
-        .btn { background: var(--accent); color: black; border: none; padding: 8px 18px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        .btn:disabled { background: #444; color: #888; cursor: not-allowed; }
-        .settings-btn { background: transparent; border: 1px solid #333; color: #888; padding: 8px; border-radius: 6px; cursor: pointer; }
 
-        /* Modals */
-        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 100; flex-direction: column; padding: 20px; align-items: center; justify-content: center;}
-        .modal-content { background: var(--panel); padding: 25px; border-radius: 12px; border: 1px solid var(--border); width: 90%; max-width: 700px; display: flex; flex-direction: column; gap: 15px;}
-        
-        textarea.code-box { flex-grow: 1; background: #000; color: #00ff88; font-family: 'Fira Code', monospace; padding: 15px; border: 1px solid var(--border); min-height: 400px; resize: none; font-size: 0.85rem;}
-        
-        .setting-group { display: flex; flex-direction: column; gap: 5px; }
-        .setting-group label { font-size: 0.75rem; color: #888; }
-        .setting-group input, .setting-group textarea { background: #000; border: 1px solid var(--border); color: white; padding: 8px; border-radius: 4px; }
-        .setting-row { display: flex; gap: 15px; }
-        .setting-row > div { flex: 1; }
+        /* Leaderboard */
+        #leaderboard {
+            position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.6);
+            padding: 12px; border-radius: 8px; font-family: 'Courier New', monospace; pointer-events: none; border: 1px solid #222;
+        }
+
+        /* Joystick Mobile */
+        #joystick-container {
+            position: fixed; bottom: 50px; left: 50px; width: 120px; height: 120px;
+            background: rgba(255,255,255,0.05); border: 2px solid rgba(255,255,255,0.1);
+            border-radius: 50%; display: none; z-index: 50;
+        }
+        #joystick-knob {
+            position: absolute; top: 35px; left: 35px; width: 50px; height: 50px;
+            background: var(--accent); opacity: 0.5; border-radius: 50%;
+        }
+
+        /* Respawn Timer */
+        #respawn-msg {
+            position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 2rem; font-weight: bold; color: var(--accent); display: none; z-index: 110; text-shadow: 0 0 10px black;
+        }
+
+        @keyframes slideIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <div class="sidebar">
-        <div class="logo"><div id="status-dot" class="status-dot"></div> Build n Share</div>
-        <div class="nav-tabs">
-            <button class="tab-btn active" onclick="setTab('explore')">Explore</button>
-            <button class="tab-btn" onclick="setTab('mine')">My Apps</button>
-        </div>
-        <div id="app-list" class="app-list"></div>
-    </div>
+<div id="notification-container"></div>
 
-    <div class="main">
-        <div class="browser-header">
-            <input type="text" class="url-bar" id="url-display" value="https://websim.ai/local-qwen" readonly>
-            <button class="chat-toggle-btn" onclick="toggleChat()">💬 Chat</button>
+<div id="overlay">
+    <div class="box">
+        <h1 style="color: var(--accent); margin-top: 0; letter-spacing: 2px;">SNAKE.IO</h1>
+        <input type="text" id="nickname" placeholder="Nickname" maxlength="12">
+        <div style="text-align: left; margin-top: 10px;">
+            <label style="font-size: 0.7rem; color: #888; text-transform: uppercase;">Skin Color</label>
+            <input type="color" id="skinColor" value="#00ff88">
         </div>
-        <iframe id="preview-frame" class="preview-frame" sandbox="allow-scripts allow-modals allow-forms allow-popups allow-same-origin"></iframe>
-
-        <div class="prompt-wrap">
-            <div class="prompt-input-row">
-                <button class="settings-btn" onclick="openSettings()">⚙️ AI</button>
-                <input type="text" id="prompt-input" placeholder="Describe the app you want to build...">
-                <button id="gen-btn" class="btn" onclick="generateApp()">Build</button>
-            </div>
-        </div>
+        <button onclick="startGame()">START GAME</button>
     </div>
 </div>
 
-<!-- Chat Panel -->
-<div id="chat-panel" class="chat-panel">
-    <div class="chat-header">
-        <span style="font-weight: bold; color: var(--accent); font-size: 0.8rem;">AI Chat</span>
-        <div style="display: flex; gap: 10px; align-items: center;">
-            <span onclick="toggleChatSettings()" style="cursor:pointer; font-size: 0.8rem;">⚙️ Settings</span>
-            <span onclick="toggleChat()" style="cursor:pointer; font-weight: bold;">✕</span>
-        </div>
-    </div>
-    
-    <!-- Chat Settings -->
-    <div id="chat-settings" style="display:none;">
-        <div class="chat-cfg-row">
-            <label>Model:</label>
-            <select id="chat-model" style="flex:1">
-                <option value="qwen2.5:1.5b" selected>Qwen 2.5 1.5B (Default)</option>
-                <option value="qwen2.5:3b">Qwen 2.5 3B</option>
-                <option value="qwen2.5:0.5b-instruct">Qwen 2.5 0.5B Instruct</option>
-            </select>
-        </div>
-        <div class="chat-cfg-row">
-            <label>Temp:</label>
-            <input type="number" id="chat-temp" value="0.9" step="0.1" style="width: 45px">
-            <label style="margin-left:10px">Tokens:</label>
-            <input type="number" id="chat-tokens" value="850" style="width: 60px">
-        </div>
-        <div class="chat-cfg-row" style="flex-direction:column; align-items:flex-start">
-            <label>System Instruction:</label>
-            <textarea id="chat-inst" style="width:100%; height:40px; margin-top:4px" placeholder="e.g. You are a helpful assistant.">You are a helpful assistant in the Build n Share app.</textarea>
-        </div>
-    </div>
+<div id="respawn-msg">Respawning in <span id="timer">3</span>s...</div>
 
-    <div id="chat-messages" class="chat-messages"></div>
-    <div class="chat-input-area">
-        <input type="text" id="chat-input" placeholder="Ask anything..." style="flex-grow:1; background:#000; border:1px solid #333; color:#fff; padding:8px; border-radius:4px; outline:none;">
-        <button onclick="sendChatMessage()" class="btn" style="padding: 5px 10px;">Send</button>
-    </div>
+<div id="leaderboard">
+    <div style="color: var(--accent); border-bottom: 1px solid #444; margin-bottom: 5px; font-weight: bold;">LEADERBOARD</div>
+    <div id="rank-list"></div>
 </div>
 
-<!-- AI Settings Modal (For App Generation) -->
-<div id="settings-modal" class="modal">
-    <div class="modal-content">
-        <h3 style="margin:0; color:var(--accent)">AI Configuration (App Builder)</h3>
-        <div class="setting-group">
-            <label>System Instruction (Max 2000 chars)</label>
-            <textarea id="cfg-inst" rows="3" maxlength="2000">Create a complete, single-file HTML/CSS/JS app. Return ONLY raw code, no markdown formatting.</textarea>
-        </div>
-        <div class="setting-row">
-            <div class="setting-group">
-                <label>Tokens (Max 3640)</label>
-                <input type="number" id="cfg-tokens" value="3500" max="3640">
-            </div>
-            <div class="setting-group">
-                <label>Temperature</label>
-                <input type="number" id="cfg-temp" value="0.75" step="0.05">
-            </div>
-        </div>
-        <div class="setting-row">
-            <div class="setting-group">
-                <label>Memory (Last X msgs)</label>
-                <input type="number" id="cfg-memory" value="0" max="100">
-            </div>
-            <div class="setting-group" style="flex-direction: row; align-items: center; gap: 10px; margin-top: 20px;">
-                <input type="checkbox" id="cfg-stream" checked>
-                <label>Streaming Mode (Real-time)</label>
-            </div>
-        </div>
-        <button class="btn" onclick="closeSettings()">Save Settings</button>
-    </div>
+<div id="joystick-container">
+    <div id="joystick-knob"></div>
 </div>
 
-<!-- Editor / Stream Modal -->
-<div id="editor-modal" class="modal">
-    <div class="modal-content" style="max-width: 900px; height: 85vh;">
-        <h3 id="editor-title" style="margin:0">Source Code</h3>
-        <textarea id="code-editor" class="code-box"></textarea>
-        <div style="display:flex; gap:10px">
-            <button id="save-btn" class="btn" onclick="saveEdit()">Save & Sync</button>
-            <button class="settings-btn" onclick="closeEditor()">Cancel</button>
-        </div>
-    </div>
-</div>
+<canvas id="gameCanvas"></canvas>
 
 <script>
-    // --- CONFIG ---
-    const TUNNEL = "https://program-beginning-achievement-formation.trycloudflare.com";
-    const AUTH_KEY = "nztrFkiuc";
-    
-    let apps = [];
-    let currentTab = 'explore';
-    let editingId = null;
-    let currentReqId = null;
-    let streamBuffer = "";
-    
-    // Chat State
-    let chatHistory = [];
-    let currentChatBubble = null;
-
-    const myId = localStorage.getItem('bns_uid') || 'u_' + Math.random().toString(36).substr(2, 9);
-    localStorage.setItem('bns_uid', myId);
-
+    // --- CONFIGURAÇÃO SERVIDOR ---
+    const TUNNEL = "https://leaf-revenue-agriculture-pole.trycloudflare.com";
+    const AUTH_KEY = "AnrPqkfIi";
     const socket = io(TUNNEL, { auth: { token: AUTH_KEY } });
 
-    // --- SOCKET EVENTS ---
-    socket.on('connect', () => {
-        document.getElementById('status-dot').classList.add('online');
-        socket.emit('RemoteEvent', { type: 'sync' });
-    });
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const MAP_SIZE = 3500;
+    const HITBOX_REDUCTION = 0.7; // Hitbox menor para jogabilidade justa
 
-    socket.on('RemoteEvent', (packet) => {
-        const d = packet;
-        if (d.type === 'app_push') {
-            const i = apps.findIndex(a => a.id === d.app.id);
-            if (i > -1) apps[i] = d.app; else apps.push(d.app);
-            render();
-        }
-        if (d.type === 'app_del') {
-            apps = apps.filter(a => a.id !== d.id);
-            render();
-        }
-        if (d.type === 'sync') {
-            apps.forEach(a => socket.emit('RemoteEvent', { type: 'app_push', app: a }));
-        }
-    });
+    let myId = Math.random().toString(36).substr(2, 9);
+    let gameActive = false;
+    let isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-    socket.on('ai_response', (data) => {
-        if (data.reqId === currentReqId) {
-            if (data.reqId.startsWith('chat_')) finalizeChat(data.text);
-            else finalizeGeneration(data.text);
-        }
-    });
+    let me = {
+        id: myId,
+        name: "",
+        x: Math.random() * MAP_SIZE,
+        y: Math.random() * MAP_SIZE,
+        angle: Math.random() * Math.PI * 2,
+        targetAngle: 0,
+        speed: 3.8,
+        turnSpeed: 0.09,
+        segments: [],
+        len: 12,
+        color: "#00ff88",
+        radius: 12
+    };
 
-    socket.on('ai_stream_chunk', (data) => {
-        if (data.reqId === currentReqId) {
-            if (data.reqId.startsWith('chat_')) {
-                streamBuffer += data.text;
-                currentChatBubble.innerText = streamBuffer;
-                const msgContainer = document.getElementById('chat-messages');
-                msgContainer.scrollTop = msgContainer.scrollHeight;
-            } else {
-                streamBuffer += data.text;
-                const editor = document.getElementById('code-editor');
-                editor.value = streamBuffer;
-                editor.scrollTop = editor.scrollHeight;
-            }
+    let others = {};
+    let foods = [];
+    let camera = { x: 0, y: 0 };
+
+    // --- NOTIFICAÇÕES DO SERVIDOR ---
+    socket.on('server_action', (data) => {
+        if (data.action === 'notification') {
+            showNotification(data.msg);
         }
     });
 
-    socket.on('ai_stream_end', (data) => {
-        if (data.reqId === currentReqId) {
-            if (data.reqId.startsWith('chat_')) finalizeChat(streamBuffer);
-            else finalizeGeneration(streamBuffer);
-        }
-    });
-
-    socket.on('ai_error', (data) => {
-        if (data.reqId === currentReqId) {
-            alert("AI Error: " + data.error);
-            resetUI();
-        }
-    });
-
-    // --- CHAT LOGIC ---
-    function toggleChat() {
-        const panel = document.getElementById('chat-panel');
-        panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
-    }
-
-    function toggleChatSettings() {
-        const s = document.getElementById('chat-settings');
-        s.style.display = s.style.display === 'none' ? 'block' : 'none';
-    }
-
-    function sendChatMessage() {
-        const input = document.getElementById('chat-input');
-        const text = input.value.trim();
-        if (!text || currentReqId) return;
-
-        // Add User Bubble
-        addChatBubble(text, 'user');
-        input.value = "";
-
-        // Prepare AI Bubble
-        currentChatBubble = addChatBubble("...", 'ai');
-        streamBuffer = "";
-        currentReqId = 'chat_' + Date.now();
-
-        const selectedModel = document.getElementById('chat-model').value;
-        const chatInstruction = document.getElementById('chat-inst').value;
-
-        const config = {
-            instruction: chatInstruction,
-            tokens: parseInt(document.getElementById('chat-tokens').value),
-            temp: parseFloat(document.getElementById('chat-temp').value),
-            stream: true
-        };
-
-        // Prefix logic for model switching
-        const promptWithModel = `_${selectedModel}:${text}`;
-
-        socket.emit('callai', {
-            reqId: currentReqId,
-            prompt: promptWithModel,
-            config: config,
-            memory: chatHistory.slice(-30) // Max 30 messages memory
-        });
-    }
-
-    function addChatBubble(text, role) {
-        const container = document.getElementById('chat-messages');
+    function showNotification(msg) {
+        const container = document.getElementById('notification-container');
         const div = document.createElement('div');
-        div.className = `chat-msg ${role}`;
-        div.innerText = text;
+        div.className = 'notif';
+        div.innerText = msg;
         container.appendChild(div);
-        container.scrollTop = container.scrollHeight;
-        return div;
+        setTimeout(() => div.remove(), 6000);
     }
 
-    function finalizeChat(text) {
-        chatHistory.push({ role: 'user', content: streamBuffer }); 
-        currentReqId = null;
-    }
-
-    // --- APP LOGIC ---
-    function generateApp() {
-        const prompt = document.getElementById('prompt-input').value;
-        if (!prompt) return;
-
-        const config = {
-            instruction: document.getElementById('cfg-inst').value,
-            tokens: parseInt(document.getElementById('cfg-tokens').value),
-            temp: parseFloat(document.getElementById('cfg-temp').value),
-            stream: document.getElementById('cfg-stream').checked
-        };
-
-        currentReqId = 'gen_' + Date.now();
-        streamBuffer = "";
-
-        document.getElementById('gen-btn').disabled = true;
-        document.getElementById('gen-btn').innerText = "Queued...";
-
-        if(config.stream) {
-            document.getElementById('editor-title').innerText = "Qwen is coding...";
-            document.getElementById('code-editor').value = "";
-            document.getElementById('editor-modal').style.display = 'flex';
-            document.getElementById('save-btn').style.display = 'none';
-        }
-
-        // App builder uses coder model by default
-        socket.emit('callai', {
-            reqId: currentReqId,
-            prompt: `_qwen2.5-coder:1.5b:${prompt}`,
-            config: config
+    // --- CONTROLES ---
+    if (isMobile) {
+        document.getElementById('joystick-container').style.display = 'block';
+        window.addEventListener('touchmove', e => {
+            const touch = e.touches[0];
+            const rect = document.getElementById('joystick-container').getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            const dx = touch.clientX - centerX;
+            const dy = touch.clientY - centerY;
+            me.targetAngle = Math.atan2(dy, dx);
+            
+            const knob = document.getElementById('joystick-knob');
+            const dist = Math.min(40, Math.hypot(dx, dy));
+            knob.style.transform = `translate(${Math.cos(me.targetAngle)*dist}px, ${Math.sin(me.targetAngle)*dist}px)`;
+        });
+    } else {
+        window.addEventListener('mousemove', e => {
+            const dx = e.clientX - window.innerWidth / 2;
+            const dy = e.clientY - window.innerHeight / 2;
+            me.targetAngle = Math.atan2(dy, dx);
         });
     }
 
-    function finalizeGeneration(text) {
-        const cleanCode = text.replace(/```html/g, "").replace(/```/g, "").trim();
-        const prompt = document.getElementById('prompt-input').value;
+    // --- NETWORKING ---
+    socket.on('RemoteEvent', (packet) => {
+        if (packet.type === 'move') {
+            if (packet.id !== myId) others[packet.id] = packet;
+        }
+        if (packet.type === 'die') {
+            delete others[packet.id];
+            if (packet.id === myId) handleDeath();
+        }
+        if (packet.type === 'food_sync') foods = packet.foods;
+        if (packet.type === 'eat') foods = foods.filter(f => f.id !== packet.fid);
+    });
+
+    function startGame() {
+        me.name = document.getElementById('nickname').value || "Snake";
+        me.color = document.getElementById('skinColor').value;
+        document.getElementById('overlay').style.display = 'none';
+        me.segments = Array(me.len).fill({x: me.x, y: me.y});
+        gameActive = true;
+        if (foods.length === 0) spawnFood();
+    }
+
+    function handleDeath() {
+        if (!gameActive) return;
+        gameActive = false;
+        const msg = document.getElementById('respawn-msg');
+        const timerSpan = document.getElementById('timer');
+        msg.style.display = 'block';
         
-        const newApp = {
-            id: 'app_' + Date.now(),
-            owner: myId,
-            name: prompt.substring(0, 30),
-            code: cleanCode,
-            time: Date.now()
-        };
-
-        socket.emit('RemoteEvent', { type: 'app_push', app: newApp });
-        loadApp(newApp.id);
-        resetUI();
+        let count = 3;
+        timerSpan.innerText = count;
+        const interval = setInterval(() => {
+            count--;
+            timerSpan.innerText = count;
+            if (count <= 0) {
+                clearInterval(interval);
+                msg.style.display = 'none';
+                respawn();
+            }
+        }, 1000);
     }
 
-    function resetUI() {
-        document.getElementById('gen-btn').disabled = false;
-        document.getElementById('gen-btn').innerText = "Build";
-        document.getElementById('prompt-input').value = "";
-        document.getElementById('editor-modal').style.display = 'none';
-        document.getElementById('save-btn').style.display = 'block';
-        currentReqId = null;
+    function respawn() {
+        me.x = Math.random() * MAP_SIZE;
+        me.y = Math.random() * MAP_SIZE;
+        me.len = 12;
+        me.segments = Array(me.len).fill({x: me.x, y: me.y});
+        gameActive = true;
     }
 
-    function loadApp(id) {
-        const app = apps.find(a => a.id === id);
-        if (app) {
-            document.getElementById('preview-frame').srcdoc = app.code;
-            document.getElementById('url-display').value = `https://websim.ai/apps/${app.id}`;
+    function spawnFood() {
+        let f = [];
+        for(let i=0; i<150; i++) {
+            f.push({
+                id: Math.random().toString(36).substr(2, 5),
+                x: Math.random() * MAP_SIZE,
+                y: Math.random() * MAP_SIZE,
+                c: `hsl(${Math.random()*360}, 100%, 50%)`,
+                s: Math.random() * 3 + 2
+            });
         }
+        foods = f;
+        socket.emit('RemoteEvent', { type: 'food_sync', foods: foods });
     }
 
-    function deleteApp(id, e) {
-        e.stopPropagation();
-        if (confirm("Delete this app?")) {
-            socket.emit('RemoteEvent', { type: 'app_del', id: id });
+    function update() {
+        if (!gameActive) return;
+
+        // Curva Suave
+        let diff = me.targetAngle - me.angle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        me.angle += diff * me.turnSpeed;
+
+        me.x += Math.cos(me.angle) * me.speed;
+        me.y += Math.sin(me.angle) * me.speed;
+
+        // Colisão com bordas
+        if (me.x < 0 || me.x > MAP_SIZE || me.y < 0 || me.y > MAP_SIZE) {
+            socket.emit('RemoteEvent', { type: 'die', id: myId });
+            handleDeath();
         }
-    }
 
-    function openEditor(id, e) {
-        e.stopPropagation();
-        const app = apps.find(a => a.id === id);
-        editingId = id;
-        document.getElementById('editor-title').innerText = "Edit Source Code";
-        document.getElementById('code-editor').value = app.code;
-        document.getElementById('editor-modal').style.display = 'flex';
-    }
+        me.segments.unshift({ x: me.x, y: me.y });
+        if (me.segments.length > me.len) me.segments.pop();
 
-    function saveEdit() {
-        const app = apps.find(a => a.id === editingId);
-        if (app) {
-            app.code = document.getElementById('code-editor').value;
-            socket.emit('RemoteEvent', { type: 'app_push', app: app });
-            loadApp(app.id);
-            closeEditor();
-        }
-    }
-
-    function render() {
-        const list = document.getElementById('app-list');
-        list.innerHTML = "";
-        const filtered = currentTab === 'mine' ? apps.filter(a => a.owner === myId) : apps;
-
-        filtered.sort((a,b) => b.time - a.time).forEach(app => {
-            const isOwner = app.owner === myId;
-            const div = document.createElement('div');
-            div.className = "app-card";
-            div.onclick = () => loadApp(app.id);
-            div.innerHTML = `
-                <div class="app-card-name">${app.name}</div>
-                <div class="app-actions">
-                    ${isOwner ? `<span class="action-link" onclick="openEditor('${app.id}', event)">Edit</span>` : ''}
-                    ${isOwner ? `<span class="action-link" style="color:var(--error)" onclick="deleteApp('${app.id}', event)">Delete</span>` : ''}
-                </div>
-            `;
-            list.appendChild(div);
+        // Comer Comida
+        foods.forEach((f, i) => {
+            if (Math.hypot(me.x - f.x, me.y - f.y) < me.radius + 10) {
+                me.len += 1.5;
+                socket.emit('RemoteEvent', { type: 'eat', fid: f.id });
+                foods.splice(i, 1);
+            }
         });
+
+        // Colisão com Outros (Hitbox Justa)
+        Object.values(others).forEach(enemy => {
+            enemy.segments.forEach((seg, idx) => {
+                if (idx < 3) return; // Ignora a própria cabeça do inimigo
+                const dist = Math.hypot(me.x - seg.x, me.y - seg.y);
+                if (dist < (me.radius + enemy.radius) * HITBOX_REDUCTION) {
+                    socket.emit('RemoteEvent', { type: 'die', id: myId });
+                    handleDeath();
+                }
+            });
+        });
+
+        socket.emit('RemoteEvent', {
+            type: 'move', id: myId, name: me.name, x: me.x, y: me.y, 
+            angle: me.angle, segments: me.segments, color: me.color, 
+            radius: me.radius, len: me.len
+        });
+
+        updateLeaderboard();
     }
 
-    function setTab(t) {
-        currentTab = t;
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        event.target.classList.add('active');
-        render();
+    function updateLeaderboard() {
+        let players = Object.values(others);
+        players.push(me);
+        players.sort((a, b) => b.len - a.len);
+        const list = document.getElementById('rank-list');
+        list.innerHTML = players.slice(0, 5).map((p, i) => 
+            `<div style="font-size:0.8rem; margin-bottom:3px;">${i+1}. ${p.name || 'Snake'} (${Math.floor(p.len)})</div>`
+        ).join('');
     }
 
-    function openSettings() { document.getElementById('settings-modal').style.display = 'flex'; }
-    function closeSettings() { document.getElementById('settings-modal').style.display = 'none'; }
-    function closeEditor() { document.getElementById('editor-modal').style.display = 'none'; }
+    function draw() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        ctx.fillStyle = '#050505';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    document.getElementById('prompt-input').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') generateApp();
-    });
-    
-    document.getElementById('chat-input').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendChatMessage();
-    });
+        camera.x = me.x - canvas.width / 2;
+        camera.y = me.y - canvas.height / 2;
+
+        ctx.save();
+        ctx.translate(-camera.x, -camera.y);
+
+        // Grade
+        ctx.strokeStyle = '#111';
+        for(let i=0; i<=MAP_SIZE; i+=150) {
+            ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, MAP_SIZE); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(MAP_SIZE, i); ctx.stroke();
+        }
+
+        // Comida
+        foods.forEach(f => {
+            ctx.fillStyle = f.c;
+            ctx.shadowBlur = 8; ctx.shadowColor = f.c;
+            ctx.beginPath(); ctx.arc(f.x, f.y, f.s, 0, Math.PI*2); ctx.fill();
+            ctx.shadowBlur = 0;
+        });
+
+        // Outras Snakes
+        Object.values(others).forEach(enemy => drawSnake(enemy));
+
+        // Minha Snake
+        if (gameActive) drawSnake(me);
+
+        ctx.restore();
+        requestAnimationFrame(draw);
+    }
+
+    function drawSnake(s) {
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = s.radius * 2;
+
+        ctx.beginPath();
+        s.segments.forEach((seg, i) => {
+            if (i === 0) ctx.moveTo(seg.x, seg.y);
+            else ctx.lineTo(seg.x, seg.y);
+        });
+        ctx.stroke();
+
+        // Olhos
+        const head = s.segments[0];
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(head.x + Math.cos(s.angle + 0.5) * 6, head.y + Math.sin(s.angle + 0.5) * 6, 3, 0, Math.PI*2);
+        ctx.arc(head.x + Math.cos(s.angle - 0.5) * 6, head.y + Math.sin(s.angle - 0.5) * 6, 3, 0, Math.PI*2);
+        ctx.fill();
+        
+        ctx.fillStyle = "rgba(255,255,255,0.4)";
+        ctx.font = "bold 12px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(s.name, head.x, head.y - 20);
+    }
+
+    setInterval(update, 1000 / 60);
+    draw();
 </script>
 </body>
 </html>
