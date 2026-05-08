@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>snake.io | Pro VC Edition</title>
+    <title>snake.io | VAD Voice Edition</title>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         :root { --accent: #00ff88; --bg: #050505; }
@@ -16,9 +16,11 @@
             z-index: 1000; background: rgba(0,0,0,0.8); padding: 10px 20px;
             border-radius: 30px; border: 1px solid var(--accent);
             display: none; align-items: center; gap: 10px; cursor: pointer;
+            transition: all 0.2s;
         }
-        .mic-on { color: var(--accent); }
-        .mic-off { color: #ff4444; }
+        .mic-on { color: var(--accent); box-shadow: 0 0 15px var(--accent); }
+        .mic-off { color: #ff4444; border-color: #ff4444; }
+        .transmitting { background: var(--accent) !important; color: black !important; }
 
         /* UI de Login */
         #overlay {
@@ -35,23 +37,10 @@
             padding: 12px; border-radius: 8px; font-family: monospace; pointer-events: none; z-index: 500;
         }
 
-        /* CONTROLES MOBILE (JOYSTICK E BOOST) */
-        #joystick-ui { 
-            position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; 
-            background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.2);
-            border-radius: 50%; display: none; z-index: 1000; touch-action: none;
-        }
-        #joystick-knob { 
-            position: absolute; top: 35px; left: 35px; width: 50px; height: 50px; 
-            background: var(--accent); border-radius: 50%; opacity: 0.6; pointer-events: none;
-        }
-        #boost-btn { 
-            position: fixed; bottom: 60px; right: 40px; width: 80px; height: 80px; 
-            background: rgba(0,255,136,0.2); border: 3px solid var(--accent); 
-            border-radius: 50%; display: none; align-items: center; justify-content: center;
-            font-weight: bold; color: white; z-index: 1000; touch-action: none;
-            text-shadow: 0 0 5px black;
-        }
+        /* Controles Mobile */
+        #joystick-ui { position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.2); border-radius: 50%; display: none; z-index: 1000; touch-action: none; }
+        #joystick-knob { position: absolute; top: 35px; left: 35px; width: 50px; height: 50px; background: var(--accent); border-radius: 50%; opacity: 0.6; pointer-events: none; }
+        #boost-btn { position: fixed; bottom: 60px; right: 40px; width: 80px; height: 80px; background: rgba(0,255,136,0.2); border: 3px solid var(--accent); border-radius: 50%; display: none; align-items: center; justify-content: center; font-weight: bold; color: white; z-index: 1000; touch-action: none; }
 
         #respawn-msg { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 2rem; font-weight: bold; color: var(--accent); display: none; z-index: 1500; }
     </style>
@@ -60,22 +49,21 @@
 
 <div id="vc-control" onclick="toggleMic()">
     <span id="mic-icon" class="mic-off">🎤</span>
-    <span id="mic-status">Microfone: OFF</span>
+    <span id="mic-status">40dB VAD: OFF</span>
 </div>
 
 <div id="overlay">
     <div class="box">
         <h1 style="color: var(--accent); margin: 0 0 20px 0;">SNAKE.IO VC</h1>
         <input type="text" id="nickname" placeholder="Nickname" maxlength="10">
-        <input type="color" id="skinColor" value="#00ff88" style="height: 50px; cursor: pointer;">
-        <button onclick="startGame()">JOGAR AGORA</button>
+        <input type="color" id="skinColor" value="#00ff88">
+        <button onclick="startGame()">JOGAR</button>
     </div>
 </div>
 
 <div id="respawn-msg">Respawning in <span id="timer">3</span>s...</div>
 <div id="leaderboard"><div id="rank-list"></div></div>
 
-<!-- ESSES SÃO OS BOTÕES QUE VOCÊ PROCUROU -->
 <div id="joystick-ui"><div id="joystick-knob"></div></div>
 <div id="boost-btn">BOOST</div>
 
@@ -94,8 +82,6 @@
 
     let myId = Math.random().toString(36).substr(2, 9);
     let gameActive = false;
-    
-    // Detecção de Mobile mais robusta
     let isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
     let me = {
@@ -108,23 +94,128 @@
     let others = {};
     let foods = [];
     let camera = { x: 0, y: 0 };
-    let isMuted = true;
 
-    // --- INICIALIZAÇÃO DA UI ---
+    // --- VOICE SYSTEM (VAD & QUEUE) ---
+    let isMuted = true;
+    let audioContext, analyser, microphone, processor;
+    let mediaRecorder;
+    let audioChunks = [];
+    let lastTimeAboveThreshold = 0;
+    let isRecording = false;
+    const DB_THRESHOLD = 40; // Sensibilidade solicitada
+    const SILENCE_TIMEOUT = 500; // 0.5s para fechar o mic
+
+    async function initVoice() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            microphone = audioContext.createMediaStreamSource(stream);
+            analyser.fftSize = 256;
+            microphone.connect(analyser);
+
+            mediaRecorder = new MediaRecorder(stream);
+            
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) audioChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                audioChunks = [];
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob);
+                reader.onloadend = () => {
+                    if (gameActive) {
+                        socket.emit('RemoteEvent', { 
+                            type: 'voice', id: myId, audio: reader.result, x: me.x, y: me.y 
+                        });
+                    }
+                };
+            };
+
+            // Loop de monitoramento de volume
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            function checkVolume() {
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for(let i=0; i<bufferLength; i++) sum += dataArray[i];
+                let average = sum / bufferLength;
+                let db = 20 * Math.log10(average || 1); // Conversão simples para dB
+
+                if (!isMuted && gameActive) {
+                    if (db > DB_THRESHOLD) {
+                        lastTimeAboveThreshold = Date.now();
+                        if (!isRecording) {
+                            isRecording = true;
+                            mediaRecorder.start();
+                            document.getElementById('vc-control').classList.add('transmitting');
+                        }
+                    } else {
+                        if (isRecording && Date.now() - lastTimeAboveThreshold > SILENCE_TIMEOUT) {
+                            isRecording = false;
+                            mediaRecorder.stop();
+                            document.getElementById('vc-control').classList.remove('transmitting');
+                        }
+                    }
+                }
+                requestAnimationFrame(checkVolume);
+            }
+            checkVolume();
+
+        } catch (err) { console.error("Mic Error:", err); }
+    }
+
+    // Fila de áudio para evitar lag na recepção
+    const remoteAudioQueues = {};
+
+    function playQueuedAudio(userId, audioData, distance) {
+        if (!remoteAudioQueues[userId]) remoteAudioQueues[userId] = { queue: [], playing: false };
+        
+        remoteAudioQueues[userId].queue.push({ data: audioData, dist: distance });
+        
+        if (!remoteAudioQueues[userId].playing) {
+            processQueue(userId);
+        }
+    }
+
+    function processQueue(userId) {
+        const userObj = remoteAudioQueues[userId];
+        if (userObj.queue.length === 0) {
+            userObj.playing = false;
+            return;
+        }
+
+        userObj.playing = true;
+        const item = userObj.queue.shift();
+        const audio = new Audio(item.data);
+        audio.volume = Math.max(0, 1 - (item.dist / VC_RANGE));
+        
+        audio.onended = () => processQueue(userId);
+        audio.play().catch(() => processQueue(userId));
+    }
+
+    function toggleMic() {
+        isMuted = !isMuted;
+        if (!isMuted && audioContext?.state === 'suspended') audioContext.resume();
+        const icon = document.getElementById('mic-icon');
+        icon.className = isMuted ? 'mic-off' : 'mic-on';
+        document.getElementById('mic-status').innerText = isMuted ? '40dB VAD: OFF' : '40dB VAD: ACTIVE';
+    }
+
+    // --- GAME LOGIC ---
     function startGame() {
         me.name = document.getElementById('nickname').value || "Snake";
         me.color = document.getElementById('skinColor').value;
-        
         document.getElementById('overlay').style.display = 'none';
         document.getElementById('vc-control').style.display = 'flex';
-        
-        // MOSTRAR CONTROLES SE FOR MOBILE
         if (isMobile) {
             document.getElementById('joystick-ui').style.display = 'block';
             document.getElementById('boost-btn').style.display = 'flex';
             initMobileControls();
         }
-
         me.segments = Array(15).fill({x: me.x, y: me.y});
         gameActive = true;
         initVoice();
@@ -134,80 +225,27 @@
     function initMobileControls() {
         const joystick = document.getElementById('joystick-ui');
         const knob = document.getElementById('joystick-knob');
-        const boostBtn = document.getElementById('boost-btn');
-
-        // Lógica do Joystick
         window.addEventListener('touchmove', e => {
             const touch = Array.from(e.touches).find(t => t.target.closest('#joystick-ui'));
             if (touch) {
                 const rect = joystick.getBoundingClientRect();
-                const centerX = rect.left + rect.width / 2;
-                const centerY = rect.top + rect.height / 2;
-                const dx = touch.clientX - centerX;
-                const dy = touch.clientY - centerY;
-                
+                const dx = touch.clientX - (rect.left + rect.width/2), dy = touch.clientY - (rect.top + rect.height/2);
                 me.targetAngle = Math.atan2(dy, dx);
                 const dist = Math.min(40, Math.hypot(dx, dy));
-                
                 knob.style.transform = `translate(${Math.cos(me.targetAngle)*dist}px, ${Math.sin(me.targetAngle)*dist}px)`;
             }
         }, { passive: false });
-
-        window.addEventListener('touchend', e => {
-            knob.style.transform = `translate(0,0)`;
-        });
-
-        // Lógica do Boost
-        boostBtn.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            me.isBoosting = true;
-            boostBtn.style.background = "rgba(0,255,136,0.5)";
-        });
-        boostBtn.addEventListener('touchend', () => {
-            me.isBoosting = false;
-            boostBtn.style.background = "rgba(0,255,136,0.2)";
-        });
+        const bBtn = document.getElementById('boost-btn');
+        bBtn.addEventListener('touchstart', (e) => { e.preventDefault(); me.isBoosting = true; });
+        bBtn.addEventListener('touchend', () => me.isBoosting = false);
     }
 
-    // Lógica de Mouse para PC
     if (!isMobile) {
         window.addEventListener('mousemove', e => {
-            const dx = e.clientX - window.innerWidth / 2;
-            const dy = e.clientY - window.innerHeight / 2;
-            me.targetAngle = Math.atan2(dy, dx);
+            me.targetAngle = Math.atan2(e.clientY - window.innerHeight/2, e.clientX - window.innerWidth/2);
         });
         window.addEventListener('keydown', e => { if(e.code === 'Space') me.isBoosting = true; });
         window.addEventListener('keyup', e => { if(e.code === 'Space') me.isBoosting = false; });
-    }
-
-    // --- RESTANTE DO CÓDIGO (IGUAL AO ANTERIOR) ---
-    // (Voz, Movimento, Desenho, etc...)
-    // [Omitido aqui para brevidade, mas deve ser mantido do script anterior]
-
-    async function initVoice() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const mediaRecorder = new MediaRecorder(stream);
-            mediaRecorder.ondataavailable = (e) => {
-                if (e.data.size > 0 && !isMuted && gameActive) {
-                    const reader = new FileReader();
-                    reader.readAsDataURL(e.data);
-                    reader.onloadend = () => {
-                        socket.emit('RemoteEvent', { type: 'voice', id: myId, audio: reader.result, x: me.x, y: me.y });
-                    };
-                }
-            };
-            setInterval(() => {
-                if (mediaRecorder.state === "recording") mediaRecorder.stop();
-                if (!isMuted && gameActive) mediaRecorder.start();
-            }, 400);
-        } catch (err) {}
-    }
-
-    function toggleMic() {
-        isMuted = !isMuted;
-        document.getElementById('mic-icon').className = isMuted ? 'mic-off' : 'mic-on';
-        document.getElementById('mic-status').innerText = isMuted ? 'Microfone: OFF' : 'Microfone: ON';
     }
 
     socket.on('RemoteEvent', p => {
@@ -217,11 +255,7 @@
         }
         if (p.type === 'voice' && p.id !== myId && gameActive) {
             const dist = Math.hypot(me.x - p.x, me.y - p.y);
-            if (dist < VC_RANGE) {
-                const a = new Audio(p.audio);
-                a.volume = Math.max(0, 1 - (dist / VC_RANGE));
-                a.play().catch(()=>{});
-            }
+            if (dist < VC_RANGE) playQueuedAudio(p.id, p.audio, dist);
         }
         if (p.type === 'die') delete others[p.id];
         if (p.type === 'food_sync') foods = p.foods;
